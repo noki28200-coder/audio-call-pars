@@ -16,10 +16,6 @@ build/
 # Переменные окружения (содержит секреты)
 .env
 
-# Локальные транскрипции и результаты
-transcriptions/
-analyzer/data/
-mango-collector/state/
 
 # IDE
 .idea/
@@ -40,6 +36,3 @@ audio/*
 # Логи
 *.log
 logs/
-
-# Модели Whisper (большие файлы, скачиваются автоматически)
-transcriber/models/
