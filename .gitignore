@@ -28,7 +28,14 @@ mango-collector/state/
 *.swo
 
 # macOS
-.ы
+.DS_Store
+
+# Node
+node_modules/
+
+# Тестовые записи звонков (персональные данные)
+audio/*
+!audio/README.md
 
 # Логи
 *.log

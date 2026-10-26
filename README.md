@@ -117,8 +117,8 @@ docker compose version
 ### Шаг 2. Склонировать репозиторий
 
 ```bash
-git clone https://github.com/<ваш-аккаунт>/calls.git
-cd calls
+git clone https://github.com/noki28200-coder/audio-call-parser-go.git
+cd audio-call-parser-go
 ```
 
 ### Шаг 3. Настроить переменные окружения
