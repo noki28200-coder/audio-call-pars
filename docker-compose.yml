@@ -38,43 +38,33 @@ services:
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/init.sql"]
     restart: "no"
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2024-07-04T14-25-45Z
+  # S3-совместимое хранилище записей (SeaweedFS). MinIO больше не
+  # распространяет образы, поэтому заменён. Бакет создают сами сервисы.
+  s3:
+    image: chrislusf/seaweedfs:3.80
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"   # Веб-консоль MinIO (только с этой машины)
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:8888:8888"   # Веб-интерфейс файлов (filer)
     environment:
-      MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
-    command: server /data --console-address ":9001"
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-s3admin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-s3admin-secret}
+    # Ключи доступа берутся из окружения: без конфига SeaweedFS пускает всех анонимно
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '{"identities":[{"name":"app","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}' \
+          "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json
+        exec weed server -dir=/data -s3 -s3.port=9000 -s3.config=/tmp/s3.json
     volumes:
-      - minio_data:/data
+      - s3_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
-      interval: 10s
+      # Без подписи S3 отвечает 403 — главное, что отвечает
+      test: ["CMD-SHELL", "wget -q -S -O /dev/null http://127.0.0.1:9000/ 2>&1 | grep -q HTTP/"]
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 30
       start_period: 10s
-
-  minio-init:
-    image: quay.io/minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ENDPOINT:   http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET:     ${MINIO_BUCKET:-call-audios}
-    entrypoint: >
-      /bin/sh -c "
-        mc alias set local $$MINIO_ENDPOINT $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
-        mc mb --ignore-existing local/$$MINIO_BUCKET &&
-        mc anonymous set none local/$$MINIO_BUCKET &&
-        echo '[minio-init] Bucket $$MINIO_BUCKET готов'
-      "
-    restart: "no"
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.7.1
@@ -151,15 +141,15 @@ services:
         condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
     environment:
       POSTGRES_DSN:     postgresql://${POSTGRES_USER:-callsuser}:${POSTGRES_PASSWORD:-callspassword}@postgres:5432/${POSTGRES_DB:-callsdb}
       KAFKA_BOOTSTRAP:  kafka:9092
-      MINIO_ENDPOINT:   http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET:     ${MINIO_BUCKET:-call-audios}
+      S3_ENDPOINT:      http://s3:9000
+      S3_ACCESS_KEY:    ${S3_ACCESS_KEY:-s3admin}
+      S3_SECRET_KEY:    ${S3_SECRET_KEY:-s3admin-secret}
+      S3_BUCKET:        ${S3_BUCKET:-call-audios}
       API_KEY:          ${API_KEY:-dev-insecure-key}
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
@@ -180,15 +170,15 @@ services:
         condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
     environment:
       POSTGRES_DSN:             postgresql://${POSTGRES_USER:-callsuser}:${POSTGRES_PASSWORD:-callspassword}@postgres:5432/${POSTGRES_DB:-callsdb}
       KAFKA_BOOTSTRAP:          kafka:9092
-      MINIO_ENDPOINT:           http://minio:9000
-      MINIO_ACCESS_KEY:         ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY:         ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET:             ${MINIO_BUCKET:-call-audios}
+      S3_ENDPOINT:              http://s3:9000
+      S3_ACCESS_KEY:            ${S3_ACCESS_KEY:-s3admin}
+      S3_SECRET_KEY:            ${S3_SECRET_KEY:-s3admin-secret}
+      S3_BUCKET:                ${S3_BUCKET:-call-audios}
       MANGO_API_KEY:            ${MANGO_API_KEY}
       MANGO_API_SALT:           ${MANGO_API_SALT}
       MANGO_API_URL:            ${MANGO_API_URL:-https://app.mango-office.ru/vpbx}
@@ -223,17 +213,17 @@ services:
         condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
-      minio-init:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy
       whisperx-service:
         condition: service_healthy
     environment:
       POSTGRES_DSN:     postgresql://${POSTGRES_USER:-callsuser}:${POSTGRES_PASSWORD:-callspassword}@postgres:5432/${POSTGRES_DB:-callsdb}
       KAFKA_BOOTSTRAP:  kafka:9092
-      MINIO_ENDPOINT:   http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET:     ${MINIO_BUCKET:-call-audios}
+      S3_ENDPOINT:      http://s3:9000
+      S3_ACCESS_KEY:    ${S3_ACCESS_KEY:-s3admin}
+      S3_SECRET_KEY:    ${S3_SECRET_KEY:-s3admin-secret}
+      S3_BUCKET:        ${S3_BUCKET:-call-audios}
       WHISPERX_URL:     http://whisperx-service:8001
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
       MAX_RETRIES:      ${MAX_RETRIES:-3}
@@ -280,5 +270,5 @@ services:
 
 volumes:
   postgres_data:
-  minio_data:
+  s3_data:
   ollama_models:

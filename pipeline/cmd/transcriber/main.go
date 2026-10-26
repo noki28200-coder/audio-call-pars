@@ -3,7 +3,7 @@
 // Pipeline:
 //
 //	Kafka 'calls-ready' {call_id}
-//	  → взять file_path из PostgreSQL, скачать аудио из MinIO
+//	  → взять file_path из PostgreSQL, скачать аудио из S3
 //	  → POST аудио в whisperx-service
 //	  → обновить PostgreSQL (transcript_*, status='transcribed')
 //	  → отправить в Kafka 'transcriptions-done' {call_id}
@@ -57,7 +57,7 @@ func (t *transcriber) process(ctx context.Context, callID string) error {
 
 	obj, err := t.mc.GetObject(ctx, t.bucket, *filePath, minio.GetObjectOptions{})
 	if err != nil {
-		return fmt.Errorf("minio get: %w", err)
+		return fmt.Errorf("s3 get: %w", err)
 	}
 	defer obj.Close()
 
@@ -111,7 +111,7 @@ func main() {
 	ctx, stop := app.Init()
 	defer stop()
 
-	minioCfg := objstore.ConfigFromEnv()
+	s3Cfg := objstore.ConfigFromEnv()
 	postgresDSN := app.MustEnv("POSTGRES_DSN")
 	whisperURL := app.Getenv("WHISPERX_URL", "http://whisperx-service:8001")
 
@@ -121,9 +121,12 @@ func main() {
 	}
 	defer db.Close()
 
-	mc, err := objstore.New(minioCfg)
+	mc, err := objstore.New(s3Cfg)
 	if err != nil {
-		app.Fatal("minio connect", err)
+		app.Fatal("s3 connect", err)
+	}
+	if err := objstore.EnsureBucket(ctx, mc, s3Cfg.Bucket); err != nil {
+		app.Fatal("s3 bucket", err)
 	}
 
 	kc, err := queue.NewConsumer(queue.Bootstrap(), "transcriber-group", queue.TopicCallsReady)
@@ -145,7 +148,7 @@ func main() {
 	t := &transcriber{
 		db:       db,
 		mc:       mc,
-		bucket:   minioCfg.Bucket,
+		bucket:   s3Cfg.Bucket,
 		kc:       kc,
 		whisper:  &whisperClient{baseURL: whisperURL, http: &http.Client{Timeout: whisperTimeout}},
 		language: app.Getenv("WHISPER_LANGUAGE", "ru"),

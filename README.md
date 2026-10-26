@@ -1,7 +1,7 @@
 # Система анализа звонков
 
 Микросервисная система автоматической обработки записей звонков:
-скачивает MP3 из МангоОфис → хранит в MinIO → транскрибирует через Whisper → анализирует через Ollama/Gemma → отдаёт результаты в CRM через REST API.
+скачивает MP3 из МангоОфис → хранит в S3 (SeaweedFS) → транскрибирует через Whisper → анализирует через Ollama/Gemma → отдаёт результаты в CRM через REST API.
 
 ## Содержание
 
@@ -27,9 +27,9 @@ x
       │  (каждые N минут)
       ▼
 mango-collector  (Go)
-      │  скачивает MP3, сохраняет в MinIO, пишет в PostgreSQL
+      │  скачивает MP3, сохраняет в S3, пишет в PostgreSQL
       ▼
-  MinIO (MP3) ──► Kafka: calls-ready
+  S3 (MP3) ──► Kafka: calls-ready
                          │
                 ┌────────┘
                 ▼
@@ -58,7 +58,7 @@ mango-collector  (Go)
 
 **Ручная загрузка:**
 ```
-CRM / curl ──► POST /calls/upload ──► MinIO + PostgreSQL + Kafka: calls-ready
+CRM / curl ──► POST /calls/upload ──► S3 + PostgreSQL + Kafka: calls-ready
                                                    │
                                              тот же пайплайн ──►
 ```
@@ -72,11 +72,11 @@ CRM / curl ──► POST /calls/upload ──► MinIO + PostgreSQL + Kafka: ca
 | `nginx` | **8080** | Точка входа: проксирует API, раздаёт фронтенд |
 | `api` | — (внутренний 8000) | Главный REST API — всё взаимодействие с CRM/фронтом |
 | `mango-collector` | — | Автоматический опрос МангоОфис API (`pipeline/cmd/collector`) |
-| `transcriber` | — | Транскрибация: MinIO → whisperx-service (`pipeline/cmd/transcriber`) |
+| `transcriber` | — | Транскрибация: S3 → whisperx-service (`pipeline/cmd/transcriber`) |
 | `whisperx-service` | — (внутренний 8001) | HTTP-инференс faster-whisper |
 | `analyzer` | — | LLM-анализ через Ollama/Gemma (`pipeline/cmd/analyzer`) |
 | `db-migrate` | — | Применяет `db/init.sql` при каждом запуске и завершается |
-| `minio` | 9000 (API), **9001** (веб-консоль), только `127.0.0.1` | Хранилище MP3 файлов |
+| `s3` | 9000 (S3 API), **8888** (веб-интерфейс файлов), только `127.0.0.1` | Хранилище MP3 файлов (SeaweedFS, S3-совместимое) |
 | `postgres` | — (только внутри сети) | База данных |
 | `kafka` | — (внутри сети) | Очередь событий |
 | `zookeeper` | — | Координатор Kafka |
@@ -138,7 +138,7 @@ nano .env
 - `MANGO_API_SALT` — соль для подписи из личного кабинета МангоОфис
 - `API_KEY` — ключ для авторизации в REST API (см. ниже как сгенерировать)
 - `POSTGRES_PASSWORD` — пароль базы данных
-- `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` — логин/пароль MinIO
+- `S3_ACCESS_KEY`, `S3_SECRET_KEY` — ключи доступа к хранилищу S3 (придумайте сами)
 
 Сгенерировать безопасный API-ключ:
 ```bash
@@ -169,9 +169,8 @@ curl http://localhost:8080/health
 # Открыть в браузере интерактивную документацию API
 # http://localhost:8080/docs
 
-# Открыть в браузере консоль MinIO
-# http://localhost:9001
-# Логин/пароль из .env: MINIO_ACCESS_KEY / MINIO_SECRET_KEY
+# Посмотреть файлы записей в браузере (веб-интерфейс SeaweedFS)
+# http://localhost:8888/buckets/call-audios/
 
 # Открыть панель управления
 # http://localhost:8080/admin.html
@@ -189,10 +188,10 @@ POSTGRES_DB=callsdb
 POSTGRES_USER=callsuser
 POSTGRES_PASSWORD=СМЕНИТЬ_НА_СИЛЬНЫЙ_ПАРОЛЬ
 
-# ── MinIO (объектное хранилище для MP3) ────────────────────────
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=СМЕНИТЬ_НА_СИЛЬНЫЙ_ПАРОЛЬ
-MINIO_BUCKET=call-audios
+# ── S3 (SeaweedFS, хранилище для MP3) ──────────────────────────
+S3_ACCESS_KEY=s3admin
+S3_SECRET_KEY=СМЕНИТЬ_НА_СИЛЬНЫЙ_ПАРОЛЬ
+S3_BUCKET=call-audios
 
 # ── REST API авторизация ────────────────────────────────────────
 # Генерировать: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -395,7 +394,7 @@ curl http://localhost:8080/calls/mango_rec123abc/status \
 | Статус | Описание |
 |---|---|
 | `pending` | Запись создана в БД, файл ещё скачивается |
-| `stored` | MP3 сохранён в MinIO, ожидает транскрибации |
+| `stored` | MP3 сохранён в S3, ожидает транскрибации |
 | `transcribing` | Идёт транскрибация |
 | `transcribed` | Транскрипция готова, ожидает анализа |
 | `analyzing` | Идёт анализ |
@@ -417,7 +416,7 @@ GET /calls/{call_id}/audio
 X-API-Key: <ключ>
 ```
 
-Стриминг аудио напрямую из MinIO. Поддерживает `Range` (ответ `206 Partial Content`) — нужно плееру для перемотки.
+Стриминг аудио напрямую из S3. Поддерживает `Range` (ответ `206 Partial Content`) — нужно плееру для перемотки.
 
 Для ссылок, которые браузер открывает сам (`<audio src>`, скачивание), ключ можно передать
 параметром `?api_key=`: заголовок такие запросы отправить не могут. Учтите, что ключ из URL попадает в логи nginx.
@@ -637,7 +636,7 @@ curl "http://localhost:8080/admin/logs?level=error&stage=transcription" \
 | `direction` | TEXT | `inbound` или `outbound` |
 | `duration_seconds` | INT | Длительность в секундах |
 | `start_time` | TIMESTAMPTZ | Время начала звонка |
-| `file_path` | TEXT | Путь в MinIO (`calls/YYYY-MM-DD/<uuid>.mp3`) |
+| `file_path` | TEXT | Ключ объекта в S3 (`calls/YYYY-MM-DD/<uuid>.mp3`) |
 | `file_size_bytes` | BIGINT | Размер файла в байтах |
 | `status` | TEXT | Текущий статус обработки |
 | `retry_count` | INT | Сколько раз текущий этап завершился ошибкой |
@@ -776,7 +775,7 @@ docker compose up -d
 # Полная остановка
 docker compose down
 
-# Остановка с удалением всех данных (ОСТОРОЖНО: удалит базу, MinIO, модели)
+# Остановка с удалением всех данных (ОСТОРОЖНО: удалит базу, записи звонков, модели)
 docker compose down -v
 ```
 
@@ -789,11 +788,9 @@ docker compose exec postgres pg_dump -U callsuser callsdb > backup_$(date +%Y%m%
 # Восстановить бэкап
 docker compose exec -T postgres psql -U callsuser callsdb < backup_20240715.sql
 
-# MinIO данные хранятся в Docker volume minio_data
-# Для бэкапа файлов используй mc (MinIO Client):
-docker run --rm -it --network calls_default \
-  quay.io/minio/mc \
-  mirror local/call-audios /backup/
+# Записи звонков хранятся в Docker volume s3_data — бэкап копированием тома
+docker run --rm -v audio-call-parser-go_s3_data:/data -v $(pwd):/backup alpine \
+  tar czf /backup/s3_backup.tar.gz /data
 ```
 
 ### Масштабирование транскрайбера (если очередь растёт)
@@ -839,7 +836,7 @@ docker compose logs transcriber
 # Часто причины:
 # 1. Не хватает RAM — уменьши WHISPER_MODEL в .env (например: small вместо medium)
 # 2. Звонок уже обработан — проверить статус: GET /calls/{id}/status
-# 3. Файл поврежден — проверить в MinIO консоли: http://localhost:9001
+# 3. Файл поврежден — проверить в веб-интерфейсе файлов: http://localhost:8888/buckets/call-audios/
 ```
 
 ### Ошибки при анализе (Ollama)
@@ -937,7 +934,7 @@ calls/
     │   └── analyzer/         # Анализ через Ollama
     └── internal/
         ├── app/              # Env, логгер, остановка по сигналу
-        ├── objstore/         # Клиент MinIO
+        ├── objstore/         # Клиент S3
         ├── queue/            # Топики и формат событий Kafka
         ├── store/            # Статусы и запросы к PostgreSQL
         └── worker/           # Общий цикл этапа: захват, ошибки, повторы
@@ -970,12 +967,12 @@ source venv/bin/activate
 pip install -r api/requirements.txt
 
 # Запустить только инфраструктуру
-docker compose up -d postgres kafka minio zookeeper ollama
+docker compose up -d postgres kafka s3 ollama
 
 # Запустить API локально
 POSTGRES_DSN="postgresql://callsuser:callspassword@localhost:5432/callsdb" \
 KAFKA_BOOTSTRAP="localhost:9092" \
-MINIO_ENDPOINT="http://localhost:9000" \
+S3_ENDPOINT="http://localhost:9000" S3_ACCESS_KEY=s3admin S3_SECRET_KEY=s3admin-secret \
 API_KEY="dev-key" \
 uvicorn api.main:app --reload --port 8000
 ```
@@ -1000,17 +997,17 @@ docker compose restart analyzer
 1. Склонировать репозиторий с GitHub
 2. Скопировать `.env` файл (не коммитится в git)
 3. Выполнить `docker compose up -d`
-4. База данных и MinIO данные создадутся заново (данные не переносятся)
+4. База данных и записи звонков создадутся заново (данные не переносятся)
 
 Для переноса данных:
 ```bash
 # На старом ПК
 docker compose exec postgres pg_dump -U callsuser callsdb > db_backup.sql
-docker run --rm -v calls_minio_data:/data -v $(pwd):/backup alpine \
-  tar czf /backup/minio_backup.tar.gz /data
+docker run --rm -v audio-call-parser-go_s3_data:/data -v $(pwd):/backup alpine \
+  tar czf /backup/s3_backup.tar.gz /data
 
-# На новом ПК (после запуска docker compose up -d postgres minio)
+# На новом ПК (после запуска docker compose up -d postgres s3)
 docker compose exec -T postgres psql -U callsuser callsdb < db_backup.sql
-docker run --rm -v calls_minio_data:/data -v $(pwd):/backup alpine \
-  tar xzf /backup/minio_backup.tar.gz -C /
+docker run --rm -v audio-call-parser-go_s3_data:/data -v $(pwd):/backup alpine \
+  tar xzf /backup/s3_backup.tar.gz -C /
 ```

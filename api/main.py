@@ -44,23 +44,23 @@ logger = logging.getLogger("api")
 # ── Конфигурация ──────────────────────────────────────────────
 POSTGRES_DSN = os.getenv("POSTGRES_DSN")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
-BUCKET = os.getenv("MINIO_BUCKET", "call-audios")
+S3_ENDPOINT = os.getenv("S3_ENDPOINT")
+BUCKET = os.getenv("S3_BUCKET", "call-audios")
 API_KEY = os.getenv("API_KEY", "")
 
-_minio = None
+_s3 = None
 _producer = None
 
 
 # ── Инициализация клиентов ────────────────────────────────────
 
-def _init_minio():
+def _init_s3():
     client = boto3.client(
         "s3",
-        endpoint_url=MINIO_ENDPOINT,
-        aws_access_key_id=os.getenv("MINIO_ACCESS_KEY"),
-        aws_secret_access_key=os.getenv("MINIO_SECRET_KEY"),
-        config=Config(signature_version="s3v4"),
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=os.getenv("S3_ACCESS_KEY"),
+        aws_secret_access_key=os.getenv("S3_SECRET_KEY"),
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
     try:
         client.create_bucket(Bucket=BUCKET)
@@ -90,8 +90,8 @@ def _init_kafka(retries: int = 15, delay: int = 3) -> KafkaProducer:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _minio, _producer
-    _minio = _init_minio()
+    global _s3, _producer
+    _s3 = _init_s3()
     _producer = _init_kafka()
     yield
     if _producer:
@@ -213,8 +213,8 @@ def upload_call(
     object_key = f"calls/{today}/{call_id}{safe_ext}"
 
     content_type = file.content_type or "audio/mpeg"
-    # Сохраняем в MinIO
-    _minio.put_object(Bucket=BUCKET, Key=object_key, Body=contents, ContentType=content_type)
+    # Сохраняем в S3
+    _s3.put_object(Bucket=BUCKET, Key=object_key, Body=contents, ContentType=content_type)
 
     # Пишем в PostgreSQL
     with conn.cursor() as cur:
@@ -380,7 +380,7 @@ def get_audio(
     _=Depends(require_auth),
 ):
     """
-    Стриминг аудиофайла звонка напрямую из MinIO.
+    Стриминг аудиофайла звонка напрямую из S3.
 
     Поддерживает Range-запросы (206 Partial Content) — нужны плееру для перемотки.
     """
@@ -390,12 +390,12 @@ def get_audio(
     key = call["file_path"]
 
     try:
-        size = _minio.head_object(Bucket=BUCKET, Key=key)["ContentLength"]
+        size = _s3.head_object(Bucket=BUCKET, Key=key)["ContentLength"]
         byte_range = _parse_range(range_header, size) if range_header and size else None
         if byte_range:
-            obj = _minio.get_object(Bucket=BUCKET, Key=key, Range=f"bytes={byte_range[0]}-{byte_range[1]}")
+            obj = _s3.get_object(Bucket=BUCKET, Key=key, Range=f"bytes={byte_range[0]}-{byte_range[1]}")
         else:
-            obj = _minio.get_object(Bucket=BUCKET, Key=key)
+            obj = _s3.get_object(Bucket=BUCKET, Key=key)
     except ClientError:
         raise HTTPException(status_code=404, detail="Файл не найден в хранилище")
 

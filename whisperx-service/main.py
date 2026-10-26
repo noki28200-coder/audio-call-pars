@@ -2,7 +2,7 @@
 HTTP-сервис транскрибации (WhisperX HTTP API).
 
 Принимает аудио по HTTP, возвращает транскрипцию.
-Вся оркестрация (Kafka, MinIO, PostgreSQL) вынесена в transcriber-go.
+Вся оркестрация (Kafka, S3, PostgreSQL) — в pipeline/cmd/transcriber.
 
 POST /transcribe
   multipart/form-data:

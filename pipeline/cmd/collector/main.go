@@ -5,7 +5,7 @@
 //  2. Получить список новых записей из МангоОфис API
 //  3. Для каждой новой записи:
 //     - Создать запись в PostgreSQL (status=pending)
-//     - Скачать MP3 из МангоОфис и загрузить в MinIO
+//     - Скачать MP3 из МангоОфис и загрузить в S3
 //     - Обновить PostgreSQL (status=stored)
 //     - Отправить событие в Kafka: calls-ready {call_id}
 package main
@@ -40,7 +40,7 @@ type collector struct {
 	maxRetries   int
 }
 
-// download скачивает запись, кладёт в MinIO и переводит звонок в stored.
+// download скачивает запись, кладёт в S3 и переводит звонок в stored.
 func (c *collector) download(ctx context.Context, callID, recordingID string) error {
 	audio, err := c.mango.downloadRecording(ctx, recordingID)
 	if err != nil {
@@ -56,7 +56,7 @@ func (c *collector) download(ctx context.Context, callID, recordingID string) er
 		minio.PutObjectOptions{ContentType: "audio/mpeg"},
 	)
 	if err != nil {
-		return fmt.Errorf("minio upload: %w", err)
+		return fmt.Errorf("s3 upload: %w", err)
 	}
 
 	_, err = c.db.DB.Exec(ctx,
@@ -196,7 +196,7 @@ func main() {
 	ctx, stop := app.Init()
 	defer stop()
 
-	minioCfg := objstore.ConfigFromEnv()
+	s3Cfg := objstore.ConfigFromEnv()
 	postgresDSN := app.MustEnv("POSTGRES_DSN")
 	mango := &mangoClient{
 		baseURL: app.Getenv("MANGO_API_URL", "https://app.mango-office.ru/vpbx"),
@@ -211,9 +211,12 @@ func main() {
 	}
 	defer db.Close()
 
-	mc, err := objstore.New(minioCfg)
+	mc, err := objstore.New(s3Cfg)
 	if err != nil {
-		app.Fatal("minio connect", err)
+		app.Fatal("s3 connect", err)
+	}
+	if err := objstore.EnsureBucket(ctx, mc, s3Cfg.Bucket); err != nil {
+		app.Fatal("s3 bucket", err)
 	}
 
 	kc, err := queue.NewProducer(queue.Bootstrap())
@@ -228,7 +231,7 @@ func main() {
 	c := &collector{
 		db:           db,
 		mc:           mc,
-		bucket:       minioCfg.Bucket,
+		bucket:       s3Cfg.Bucket,
 		kc:           kc,
 		mango:        mango,
 		pollInterval: time.Duration(app.GetInt("POLL_INTERVAL_SECONDS", 300)) * time.Second,
