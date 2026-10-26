@@ -79,7 +79,7 @@ CRM / curl ──► POST /calls/upload ──► S3 + PostgreSQL + Kafka: calls
 | `s3` | 9000 (S3 API), **8888** (веб-интерфейс файлов), только `127.0.0.1` | Хранилище MP3 файлов (SeaweedFS, S3-совместимое) |
 | `postgres` | — (только внутри сети) | База данных |
 | `kafka` | — (внутри сети) | Очередь событий (режим KRaft, без Zookeeper) |
-| `ollama` | 11434, только `127.0.0.1` | LLM-сервер (Gemma) |
+| `ollama` | — (внутренний 11434) | LLM-сервер (Gemma) |
 
 ---
 
@@ -845,7 +845,7 @@ docker compose logs transcriber
 docker compose logs analyzer
 
 # Проверить статус Ollama
-curl http://localhost:11434/api/tags
+docker compose exec ollama ollama list
 
 # Модель не скачалась — скачать вручную
 docker compose exec ollama ollama pull gemma3:4b

@@ -107,14 +107,14 @@ services:
   ollama:
     image: ollama/ollama:0.12.6
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:11434:11434"
+    # Порт наружу не публикуется: анализатор ходит по сети Docker, а 11434
+    # на хосте часто занят локально установленной Ollama
     environment:
       OLLAMA_KEEP_ALIVE: -1
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      test: ["CMD", "ollama", "list"]
       interval: 20s
       timeout: 10s
       retries: 15
