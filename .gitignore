@@ -36,3 +36,6 @@ audio/*
 # Логи
 *.log
 logs/
+
+# Локальные настройки и скилы Claude Code
+.claude/
