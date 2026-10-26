@@ -26,21 +26,21 @@ x
 МангоОфис API
       │  (каждые N минут)
       ▼
-mango-collector
+mango-collector  (Go)
       │  скачивает MP3, сохраняет в MinIO, пишет в PostgreSQL
       ▼
   MinIO (MP3) ──► Kafka: calls-ready
                          │
                 ┌────────┘
                 ▼
-         transcriber  (faster-whisper)
+         transcriber  (Go) ──► whisperx-service  (faster-whisper)
                 │  пишет транскрипцию в PostgreSQL
                 ▼
         Kafka: transcriptions-done
                 │
        ┌────────┘
        ▼
-   analyzer  (Ollama / Gemma)
+   analyzer  (Go) ──► Ollama / Gemma
        │  пишет анализ в PostgreSQL
        ├──► Kafka: analysis-done
        └──► CRM вебхук (опционально)
@@ -51,6 +51,10 @@ mango-collector
   nginx :80 ──► api  (FastAPI)
                  REST API для CRM и фронтенда
 ```
+
+События в Kafka содержат только `call_id` — данные звонка каждый этап берёт из PostgreSQL.
+Поэтому событие можно безопасно отправить повторно, а потеря события не теряет звонок
+(см. [Повторы и восстановление](#повторы-и-восстановление)).
 
 **Ручная загрузка:**
 ```
@@ -65,17 +69,18 @@ CRM / curl ──► POST /calls/upload ──► MinIO + PostgreSQL + Kafka: ca
 
 | Сервис | Порт (хост) | Назначение |
 |---|---|---|
-| `nginx` | **80** | Точка входа: проксирует API, место для фронтенда |
+| `nginx` | **8080** | Точка входа: проксирует API, раздаёт фронтенд |
 | `api` | — (внутренний 8000) | Главный REST API — всё взаимодействие с CRM/фронтом |
-| `mango-collector` | — | Автоматический опрос МангоОфис API |
-| `collector` | — | Устаревший HTTP API загрузки (замещён `/calls/upload`) |
-| `transcriber` | — | Транскрибация через faster-whisper |
-| `analyzer` | — | LLM-анализ через Ollama/Gemma |
-| `minio` | 9000 (API), **9001** (веб-консоль) | Хранилище MP3 файлов |
+| `mango-collector` | — | Автоматический опрос МангоОфис API (`pipeline/cmd/collector`) |
+| `transcriber` | — | Транскрибация: MinIO → whisperx-service (`pipeline/cmd/transcriber`) |
+| `whisperx-service` | — (внутренний 8001) | HTTP-инференс faster-whisper |
+| `analyzer` | — | LLM-анализ через Ollama/Gemma (`pipeline/cmd/analyzer`) |
+| `db-migrate` | — | Применяет `db/init.sql` при каждом запуске и завершается |
+| `minio` | 9000 (API), **9001** (веб-консоль), только `127.0.0.1` | Хранилище MP3 файлов |
 | `postgres` | — (только внутри сети) | База данных |
 | `kafka` | — (внутри сети) | Очередь событий |
 | `zookeeper` | — | Координатор Kafka |
-| `ollama` | 11434 | LLM-сервер (Gemma) |
+| `ollama` | 11434, только `127.0.0.1` | LLM-сервер (Gemma) |
 
 ---
 
@@ -158,15 +163,20 @@ docker compose logs -f
 docker compose ps
 
 # Health check API
-curl http://localhost/health
+curl http://localhost:8080/health
 # Ожидается: {"status":"ok","service":"api"}
 
 # Открыть в браузере интерактивную документацию API
-# http://localhost/docs
+# http://localhost:8080/docs
 
 # Открыть в браузере консоль MinIO
 # http://localhost:9001
 # Логин/пароль из .env: MINIO_ACCESS_KEY / MINIO_SECRET_KEY
+
+# Открыть панель управления
+# http://localhost:8080/admin.html
+# Вставить API_KEY из .env в поле «API-ключ» в шапке и нажать «Применить».
+# Ключ хранится только в этом браузере (localStorage), в коде сайта его нет.
 ```
 
 ---
@@ -227,7 +237,7 @@ CRM_WEBHOOK_URL=              # оставить пустым если не ну
 
 **Авторизация:** заголовок `X-API-Key: <ваш API_KEY из .env>`
 
-Интерактивная документация (Swagger UI): `http://localhost/docs`
+Интерактивная документация (Swagger UI): `http://localhost:8080/docs`
 
 ---
 
@@ -239,7 +249,7 @@ GET /health
 Без авторизации. Используется для мониторинга.
 
 ```bash
-curl http://localhost/health
+curl http://localhost:8080/health
 ```
 ```json
 {"status": "ok", "service": "api"}
@@ -266,7 +276,7 @@ X-API-Key: <ключ>
 | `direction` | строка | нет | `inbound` или `outbound` |
 
 ```bash
-curl -X POST http://localhost/calls/upload \
+curl -X POST http://localhost:8080/calls/upload \
   -H "X-API-Key: ВАШ_КЛЮЧ" \
   -F "file=@/path/to/call.mp3" \
   -F "employee_id=42" \
@@ -305,11 +315,11 @@ Query-параметры (все опциональны):
 
 ```bash
 # Все проанализированные за последний месяц
-curl "http://localhost/calls?status=analyzed&date_from=2024-07-01&limit=20" \
+curl "http://localhost:8080/calls?status=analyzed&date_from=2024-07-01&limit=20" \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 
 # Звонки конкретного сотрудника
-curl "http://localhost/calls?employee_id=42&limit=10" \
+curl "http://localhost:8080/calls?employee_id=42&limit=10" \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 ```json
@@ -349,7 +359,7 @@ X-API-Key: <ключ>
 `call_id` — внутренний UUID или ID записи МангоОфис (`mango_recording_id`).
 
 ```bash
-curl http://localhost/calls/mango_rec123abc \
+curl http://localhost:8080/calls/mango_rec123abc \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 
@@ -367,7 +377,7 @@ X-API-Key: <ключ>
 Лёгкий эндпоинт — только статус и временные метки (без текста транскрипции).
 
 ```bash
-curl http://localhost/calls/mango_rec123abc/status \
+curl http://localhost:8080/calls/mango_rec123abc/status \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 ```json
@@ -386,11 +396,17 @@ curl http://localhost/calls/mango_rec123abc/status \
 |---|---|
 | `pending` | Запись создана в БД, файл ещё скачивается |
 | `stored` | MP3 сохранён в MinIO, ожидает транскрибации |
+| `transcribing` | Идёт транскрибация |
 | `transcribed` | Транскрипция готова, ожидает анализа |
+| `analyzing` | Идёт анализ |
 | `analyzed` | Анализ завершён |
-| `failed_download` | Ошибка скачивания из МангоОфис (будет повторная попытка) |
+| `failed_download` | Ошибка скачивания из МангоОфис |
 | `failed_transcription` | Ошибка транскрибации |
 | `failed_analysis` | Ошибка анализа |
+
+Ошибки `failed_*` повторяются автоматически, пока `retry_count < MAX_RETRIES` (по умолчанию 3).
+Если повторы исчерпаны или ошибка неисправима (битый файл, пустая транскрипция) — статус остаётся `failed_*`,
+причина есть в `GET /admin/logs?call_id=...`.
 
 ---
 
@@ -401,16 +417,19 @@ GET /calls/{call_id}/audio
 X-API-Key: <ключ>
 ```
 
-Стриминг MP3 напрямую из MinIO.
+Стриминг аудио напрямую из MinIO. Поддерживает `Range` (ответ `206 Partial Content`) — нужно плееру для перемотки.
+
+Для ссылок, которые браузер открывает сам (`<audio src>`, скачивание), ключ можно передать
+параметром `?api_key=`: заголовок такие запросы отправить не могут. Учтите, что ключ из URL попадает в логи nginx.
 
 ```bash
 # Скачать файл
-curl http://localhost/calls/mango_rec123abc/audio \
+curl http://localhost:8080/calls/mango_rec123abc/audio \
   -H "X-API-Key: ВАШ_КЛЮЧ" \
   -o call.mp3
 
 # Или открыть прямо в плеере (например через ffplay)
-ffplay "http://localhost/calls/mango_rec123abc/audio"
+ffplay "http://localhost:8080/calls/mango_rec123abc/audio?api_key=ВАШ_КЛЮЧ"
 ```
 
 ---
@@ -423,7 +442,7 @@ X-API-Key: <ключ>
 ```
 
 ```bash
-curl http://localhost/calls/mango_rec123abc/transcript \
+curl http://localhost:8080/calls/mango_rec123abc/transcript \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 ```json
@@ -460,7 +479,7 @@ X-API-Key: <ключ>
 ```
 
 ```bash
-curl http://localhost/calls/mango_rec123abc/analysis \
+curl http://localhost:8080/calls/mango_rec123abc/analysis \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 ```json
@@ -502,7 +521,7 @@ X-API-Key: <ключ>
 ```
 
 ```bash
-curl http://localhost/admin/stats \
+curl http://localhost:8080/admin/stats \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 ```json
@@ -561,15 +580,15 @@ Query-параметры (все опциональны):
 
 ```bash
 # Только ошибки за всё время
-curl "http://localhost/admin/logs?level=error&limit=50" \
+curl "http://localhost:8080/admin/logs?level=error&limit=50" \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 
 # История обработки конкретного звонка
-curl "http://localhost/admin/logs?call_id=mango_rec123abc" \
+curl "http://localhost:8080/admin/logs?call_id=mango_rec123abc" \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 
 # Ошибки на этапе транскрибации
-curl "http://localhost/admin/logs?level=error&stage=transcription" \
+curl "http://localhost:8080/admin/logs?level=error&stage=transcription" \
   -H "X-API-Key: ВАШ_КЛЮЧ"
 ```
 ```json
@@ -621,6 +640,7 @@ curl "http://localhost/admin/logs?level=error&stage=transcription" \
 | `file_path` | TEXT | Путь в MinIO (`calls/YYYY-MM-DD/<uuid>.mp3`) |
 | `file_size_bytes` | BIGINT | Размер файла в байтах |
 | `status` | TEXT | Текущий статус обработки |
+| `retry_count` | INT | Сколько раз текущий этап завершился ошибкой |
 | `transcript_text` | TEXT | Полный текст транскрипции |
 | `transcript_language` | TEXT | Определённый язык (`ru`, `en`, ...) |
 | `transcript_language_probability` | FLOAT | Уверенность в языке (0–1) |
@@ -682,25 +702,39 @@ SELECT * FROM call_logs WHERE level = 'error' AND created_at > NOW() - INTERVAL 
 | `analysis-done` | 3 | Анализ завершён (для внешних подписчиков) |
 | `calls-errors` | 1 | Ошибки на любом этапе |
 
-### Структура события `calls-ready`
+### Формат событий
+
+`calls-ready` и `transcriptions-done` — только идентификатор звонка:
 
 ```json
-{
-  "call_id": "mango_rec123abc",
-  "file_path": "calls/2024-07-15/mango_rec123abc.mp3",
-  "source": "mango",
-  "recording_id": "rec123abc",
-  "employee_id": "42",
-  "employee_name": "Иван Петров",
-  "phone_from": "+79001234567",
-  "phone_to": "+74951234567",
-  "direction": "inbound",
-  "duration": 245,
-  "start_time": "2024-07-15T10:28:00Z",
-  "size_bytes": 1048576,
-  "uploaded_at": "2024-07-15T10:30:00Z"
-}
+{"call_id": "mango_rec123abc"}
 ```
+
+`analysis-done` — полные данные звонка для внешних подписчиков: метаданные, `transcript`
+(`full_text`, `language`, `language_probability`, `segments`) и `analysis`.
+
+`calls-errors`:
+
+```json
+{"call_id": "mango_rec123abc", "stage": "transcription", "error": "...", "permanent": false}
+```
+
+### Повторы и восстановление
+
+Каждый этап (транскрибация, анализ) сначала атомарно «захватывает» звонок
+(`stored` → `transcribing`, `transcribed` → `analyzing`). Повторное событие для уже
+захваченного или обработанного звонка просто пропускается.
+
+Раз в минуту каждый этап проверяет БД:
+
+| Ситуация | Что происходит |
+|---|---|
+| Звонок висит в `transcribing` / `analyzing` дольше таймаута (процесс упал) | → `failed_*`, попытка засчитывается |
+| `failed_*` и `retry_count < MAX_RETRIES`, прошло 5 минут | событие отправляется снова |
+| `stored` / `transcribed` без движения (событие потерялось, Kafka была недоступна) | событие отправляется снова |
+
+Сборщик Mango при каждом опросе повторяет `failed_download` и зависшие `pending`.
+При остановке сервиса посреди обработки звонок возвращается в очередь без траты попытки.
 
 ---
 
@@ -736,7 +770,7 @@ docker compose build analyzer
 docker compose up -d analyzer
 
 # Пересобрать все сервисы приложения
-docker compose build api mango-collector transcriber analyzer collector
+docker compose build api mango-collector transcriber analyzer whisperx-service
 docker compose up -d
 
 # Полная остановка
@@ -849,14 +883,14 @@ docker compose logs mango-collector
 
 # Убедиться что API ключи правильные в .env
 # Проверить connectivity
-docker compose exec mango-collector curl -I https://app.mango-office.ru/vpbx
+docker compose exec mango-collector wget -q -S --spider https://app.mango-office.ru/vpbx
 ```
 
 ### API возвращает 403 Forbidden
 
 ```bash
 # Убедиться что заголовок передаётся правильно
-curl http://localhost/calls -H "X-API-Key: ВАШ_КЛЮЧ"
+curl http://localhost:8080/calls -H "X-API-Key: ВАШ_КЛЮЧ"
 
 # Проверить что API_KEY задан в .env и не пустой
 # Если API_KEY не задан в .env, авторизация отключена (dev-режим)
@@ -875,7 +909,7 @@ calls/
 ├── FRONTEND_INTEGRATION.md   # Руководство для команды фронтенда
 │
 ├── db/
-│   └── init.sql              # Схема PostgreSQL (автозапуск при старте)
+│   └── init.sql              # Схема PostgreSQL (идемпотентная, применяется db-migrate при каждом старте)
 │
 ├── init-scripts/
 │   └── create-topics.sh      # Создание Kafka-топиков
@@ -888,36 +922,42 @@ calls/
 │   ├── main.py
 │   └── requirements.txt
 │
-├── mango-collector/          # Автосборщик записей из МангоОфис
-│   ├── Dockerfile
-│   ├── main.py
-│   ├── db.py
-│   └── requirements.txt
+├── frontend/                 # Статические страницы (раздаёт nginx)
+│   ├── admin.html
+│   ├── analytics.html
+│   └── api-key.js            # Поле ввода API-ключа в шапке (временное, до нового фронта)
 │
-├── collector/                # DEPRECATED: ручная загрузка (замещена /calls/upload)
-│   ├── Dockerfile
-│   ├── main.py
-│   ├── db.py
-│   └── requirements.txt
+├── whisperx-service/         # HTTP-инференс faster-whisper (Python)
 │
-├── transcriber/              # Whisper транскрибация
-│   ├── Dockerfile
-│   ├── main.py
-│   ├── audio_processing.py   # Предобработка аудио через PyAV
-│   ├── transcription.py      # Обёртка над WhisperModel
-│   ├── db.py
-│   └── requirements.txt
-│
-└── analyzer/                 # Ollama/Gemma анализ
-    ├── Dockerfile
-    ├── main.py
-    ├── db.py
-    └── requirements.txt
+└── pipeline/                 # Go-модуль: все сервисы конвейера
+    ├── Dockerfile            # Один образ, сервис выбирается через ARG SERVICE
+    ├── cmd/
+    │   ├── collector/        # Сборщик записей из МангоОфис
+    │   ├── transcriber/      # Транскрибация через whisperx-service
+    │   └── analyzer/         # Анализ через Ollama
+    └── internal/
+        ├── app/              # Env, логгер, остановка по сигналу
+        ├── objstore/         # Клиент MinIO
+        ├── queue/            # Топики и формат событий Kafka
+        ├── store/            # Статусы и запросы к PostgreSQL
+        └── worker/           # Общий цикл этапа: захват, ошибки, повторы
 ```
 
 ---
 
 ## Разработка
+
+### Тесты Go-сервисов
+
+```bash
+cd pipeline
+go test ./...
+
+# Интеграционные тесты запросов к БД (нужен временный PostgreSQL, БД будет очищена)
+docker run --rm -d --name pg-test -p 55432:5432 -e POSTGRES_PASSWORD=test postgres:16-alpine
+TEST_POSTGRES_DSN=postgres://postgres:test@localhost:55432/postgres go test ./internal/store/
+docker stop pg-test
+```
 
 ### Локальная разработка (без Docker)
 

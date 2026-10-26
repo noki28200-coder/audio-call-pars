@@ -286,17 +286,22 @@ Content-Type: multipart/form-data
 
 **Жизненный цикл статуса:**
 ```
-pending → stored → transcribed → analyzed
-              ↓          ↓             ↓
-      failed_download  failed_    failed_
-                      transcription  analysis
+pending → stored → transcribing → transcribed → analyzing → analyzed
+   ↓                    ↓                           ↓
+failed_download   failed_transcription        failed_analysis
 ```
+
+`transcribing` / `analyzing` — этап выполняется прямо сейчас. Ошибки `failed_*`
+повторяются автоматически (до `MAX_RETRIES` раз), поэтому `failed_*` — не всегда финальный статус.
 
 ---
 
 ### GET /calls/{call_id}/audio
 
 Скачать MP3-файл (стриминг).
+
+Поддерживает `Range` (206) — перемотка в `<audio>` работает. `<audio src>` не может отправить
+заголовок, поэтому для него ключ передаётся параметром: `/calls/{id}/audio?api_key=<ключ>`.
 
 **Заголовки:** `X-API-Key: <ключ>`
 
