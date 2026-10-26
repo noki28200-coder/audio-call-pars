@@ -193,12 +193,17 @@ services:
       WHISPER_MODEL:    ${WHISPER_MODEL:-medium}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
       WHISPER_THREADS:  ${WHISPER_THREADS:-4}
+    volumes:
+      # Кэш моделей HuggingFace: модель скачивается один раз, а оборванная
+      # загрузка продолжается после перезапуска, а не начинается заново
+      - whisper_models:/root/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      # Первый запуск скачивает модель (medium ≈ 1.5 ГБ)
+      start_period: 30m
 
   # ── Транскрибация звонков (Go, pipeline/cmd/transcriber) ────
   transcriber:
@@ -285,3 +290,4 @@ volumes:
   postgres_data:
   s3_data:
   ollama_models:
+  whisper_models:
