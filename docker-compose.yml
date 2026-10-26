@@ -66,33 +66,25 @@ services:
       retries: 30
       start_period: 10s
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.7.1
-    restart: unless-stopped
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME:   2000
-    healthcheck:
-      test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep -q Mode"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
+  # Kafka в режиме KRaft: брокер сам себе контроллер, Zookeeper не нужен
   kafka:
     image: confluentinc/cp-kafka:7.7.1
     restart: unless-stopped
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     environment:
-      KAFKA_ADVERTISED_LISTENERS:             PLAINTEXT://kafka:9092
-      KAFKA_LISTENERS:                        PLAINTEXT://0.0.0.0:9092
-      KAFKA_BROKER_ID:                        1
-      KAFKA_ZOOKEEPER_CONNECT:               zookeeper:2181
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE:       "false"
-      KAFKA_LOG_RETENTION_HOURS:             168
+      CLUSTER_ID:                                     _p5XEueIT8ypgYh7cWMqCg
+      KAFKA_NODE_ID:                                  1
+      KAFKA_PROCESS_ROLES:                            broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS:                 1@kafka:9093
+      KAFKA_LISTENERS:                                PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS:                     PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:           PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES:                CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME:               PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:         1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:            1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE:                "false"
+      KAFKA_LOG_RETENTION_HOURS:                      168
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 15s
