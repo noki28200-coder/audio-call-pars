@@ -227,6 +227,7 @@ func main() {
 	if err := queue.WaitReady(ctx, kc); err != nil {
 		app.Fatal("kafka", err)
 	}
+	app.Heartbeat(ctx, db.DB.Ping, kc.Ping)
 
 	c := &collector{
 		db:           db,

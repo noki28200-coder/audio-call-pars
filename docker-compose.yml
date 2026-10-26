@@ -185,6 +185,13 @@ services:
       POLL_INTERVAL_SECONDS:    ${POLL_INTERVAL_SECONDS:-300}
       LOOKBACK_MINUTES:         ${LOOKBACK_MINUTES:-10}
       MAX_RETRIES:              ${MAX_RETRIES:-3}
+    healthcheck:
+      # Сервис обновляет /tmp/healthy, пока видит Postgres и Kafka
+      test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 2m
 
   # ── WhisperX ML-сервис (Python, только инференс) ────────────
   whisperx-service:
@@ -227,6 +234,13 @@ services:
       WHISPERX_URL:     http://whisperx-service:8001
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
       MAX_RETRIES:      ${MAX_RETRIES:-3}
+    healthcheck:
+      # Сервис обновляет /tmp/healthy, пока видит Postgres и Kafka
+      test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 2m
 
   # ── Анализ транскрипций (Go + Ollama / Gemma, pipeline/cmd/analyzer)
   analyzer:
@@ -249,6 +263,13 @@ services:
       OLLAMA_MODEL:     ${OLLAMA_MODEL:-gemma3:4b}
       CRM_WEBHOOK_URL:  ${CRM_WEBHOOK_URL:-}
       MAX_RETRIES:      ${MAX_RETRIES:-3}
+    healthcheck:
+      # Сервис обновляет /tmp/healthy, пока видит Postgres и Kafka
+      test: ["CMD-SHELL", "find /tmp/healthy -mmin -2 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 2m
 
   # ── Nginx: точка входа ──────────────────────────────────────
   nginx:

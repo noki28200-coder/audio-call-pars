@@ -137,6 +137,7 @@ func main() {
 	if err := queue.WaitReady(ctx, kc); err != nil {
 		app.Fatal("kafka", err)
 	}
+	app.Heartbeat(ctx, db.DB.Ping, kc.Ping)
 
 	if !app.WaitHTTP(ctx, "whisperx-service", whisperURL+"/health", 60, 5*time.Second) {
 		if ctx.Err() != nil {

@@ -53,6 +53,49 @@ func Fatal(msg string, err error) {
 	os.Exit(1)
 }
 
+// ── healthcheck ─────────────────────────────────────────────────
+
+// HeartbeatFile обновляется, пока сервис жив и видит свои зависимости.
+// Healthcheck в docker-compose проверяет, что файл свежий.
+const HeartbeatFile = "/tmp/healthy"
+
+// Heartbeat раз в 30 секунд выполняет checks (например, Ping БД и Kafka)
+// и при успехе всех обновляет HeartbeatFile. Работает до отмены ctx.
+func Heartbeat(ctx context.Context, checks ...func(context.Context) error) {
+	go func() {
+		for {
+			if err := runChecks(ctx, checks); err != nil {
+				slog.Warn("healthcheck не пройден", "err", err)
+			} else if err := touch(HeartbeatFile); err != nil {
+				slog.Warn("не удалось обновить heartbeat", "err", err)
+			}
+			if !Sleep(ctx, 30*time.Second) {
+				return
+			}
+		}
+	}()
+}
+
+func runChecks(ctx context.Context, checks []func(context.Context) error) error {
+	for _, check := range checks {
+		checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := check(checkCtx)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func touch(path string) error {
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err == nil {
+		return nil
+	}
+	return os.WriteFile(path, nil, 0o644)
+}
+
 // ── ожидание зависимостей ───────────────────────────────────────
 
 // WaitHTTP ждёт, пока url не ответит 200. Возвращает false, если попытки кончились

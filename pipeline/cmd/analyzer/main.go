@@ -216,14 +216,6 @@ func main() {
 	}
 	defer db.Close()
 
-	if !app.WaitHTTP(ctx, "ollama", ollama.host+"/api/tags", 20, 5*time.Second) && ctx.Err() != nil {
-		return
-	}
-	// Без модели анализ невозможен: падаем, Docker перезапустит сервис.
-	if err := ollama.ensureModel(ctx); err != nil {
-		app.Fatal("модель Ollama недоступна", err)
-	}
-
 	kc, err := queue.NewConsumer(queue.Bootstrap(), "analyzer-group", queue.TopicTranscriptionsDone)
 	if err != nil {
 		app.Fatal("kafka connect", err)
@@ -231,6 +223,16 @@ func main() {
 	defer kc.Close()
 	if err := queue.WaitReady(ctx, kc); err != nil {
 		app.Fatal("kafka", err)
+	}
+	// До скачивания модели: оно может идти десятки минут, сервис при этом жив.
+	app.Heartbeat(ctx, db.DB.Ping, kc.Ping)
+
+	if !app.WaitHTTP(ctx, "ollama", ollama.host+"/api/tags", 20, 5*time.Second) && ctx.Err() != nil {
+		return
+	}
+	// Без модели анализ невозможен: падаем, Docker перезапустит сервис.
+	if err := ollama.ensureModel(ctx); err != nil {
+		app.Fatal("модель Ollama недоступна", err)
 	}
 
 	a := &analyzer{
