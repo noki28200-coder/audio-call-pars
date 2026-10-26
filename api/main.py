@@ -18,7 +18,10 @@
 
 import json
 import logging
+import mimetypes
 import os
+import re
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -129,11 +132,20 @@ def _log_db(conn, call_id: str, level: str, stage: str, message: str, details: d
 
 # ── Авторизация ──────────────────────────────────────────────
 
-def require_auth(x_api_key: str = Header(default="")):
-    """Проверка API-ключа. Если API_KEY не задан — аутентификация отключена (dev-режим)."""
-    if API_KEY and x_api_key != API_KEY:
+def require_auth(
+    x_api_key: str = Header(default=""),
+    api_key: str = Query(default="", include_in_schema=False),
+):
+    """
+    Проверка API-ключа. Если API_KEY не задан — аутентификация отключена (dev-режим).
+
+    Ключ берётся из заголовка X-API-Key, а для ссылок, которые браузер открывает
+    сам (<audio src>, скачивание файла), — из параметра ?api_key=.
+    """
+    provided = x_api_key or api_key
+    if API_KEY and not secrets.compare_digest(provided.encode(), API_KEY.encode()):
         raise HTTPException(status_code=403, detail="Неверный API ключ")
-    return x_api_key
+    return provided
 
 
 # ── Поиск звонка по ID ──────────────────────────────────────
@@ -218,21 +230,12 @@ def upload_call(
     conn.commit()
     _log_db(conn, call_id, "info", "upload", "Файл загружен вручную", {"size": len(contents)})
 
-    # Отправляем в Kafka
-    event = {
-        "call_id": call_id,
-        "file_path": object_key,
-        "source": "manual",
-        "employee_id": employee_id,
-        "employee_name": employee_name,
-        "phone_from": phone_from,
-        "phone_to": phone_to,
-        "direction": direction,
-        "size_bytes": len(contents),
-        "uploaded_at": datetime.utcnow().isoformat() + "Z",
-    }
-    _producer.send("calls-ready", value=event)
-    _producer.flush()
+    # Отправляем в Kafka. Данные звонка транскрибатор берёт из БД, в событии только call_id.
+    # Если Kafka недоступна, звонок остаётся в 'stored' и транскрибатор подберёт его сам.
+    try:
+        _producer.send("calls-ready", value={"call_id": call_id}).get(timeout=10)
+    except Exception as exc:
+        logger.warning("[%s] Не удалось отправить событие в Kafka: %s", call_id, exc)
 
     logger.info("[%s] Загружен вручную (%d байт)", call_id, len(contents))
     return {"status": "uploaded", "call_id": call_id, "file_path": object_key}
@@ -242,7 +245,7 @@ def upload_call(
 
 @app.get("/calls", tags=["Calls"], summary="Список звонков с фильтрами")
 def list_calls(
-    status: Optional[str] = Query(None, description="Фильтр по статусу: stored|transcribed|analyzed|failed_*"),
+    status: Optional[str] = Query(None, description="Фильтр по статусу: pending|stored|transcribing|transcribed|analyzing|analyzed|failed_*"),
     source: Optional[str] = Query(None, description="Источник: mango|manual"),
     employee_id: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None, description="От даты (ISO 8601): 2024-01-01"),
@@ -270,7 +273,11 @@ def list_calls(
         conditions.append("created_at >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("created_at <= %s")
+        # Дата без времени (2024-12-31) включает весь день
+        if len(date_to) == 10:
+            conditions.append("created_at < %s::date + 1")
+        else:
+            conditions.append("created_at <= %s")
         params.append(date_to)
     if q:
         pq = f"%{q}%"
@@ -346,23 +353,51 @@ def get_status(call_id: str, conn=Depends(_db), _=Depends(require_auth)):
 
 # ── Аудиофайл ─────────────────────────────────────────────────
 
-@app.get("/calls/{call_id}/audio", tags=["Calls"], summary="Скачать аудиозапись")
-def get_audio(call_id: str, conn=Depends(_db), _=Depends(require_auth)):
-    """
-    Стриминг MP3-файла звонка напрямую из MinIO.
+_RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
-    Поддерживает partial content (Range-запросы через nginx).
+
+def _parse_range(header: str, size: int) -> Optional[tuple]:
+    """Разобрать один диапазон 'bytes=start-end'. None — заголовок не поддерживается, отдаём файл целиком."""
+    m = _RANGE_RE.match(header.strip())
+    if not m or (not m.group(1) and not m.group(2)):
+        return None
+    if m.group(1):
+        start = int(m.group(1))
+        end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+    else:  # bytes=-500 — последние 500 байт
+        start = max(0, size - int(m.group(2)))
+        end = size - 1
+    if start > end or start >= size:
+        raise HTTPException(status_code=416, detail="Неверный диапазон", headers={"Content-Range": f"bytes */{size}"})
+    return start, end
+
+
+@app.get("/calls/{call_id}/audio", tags=["Calls"], summary="Скачать аудиозапись")
+def get_audio(
+    call_id: str,
+    range_header: Optional[str] = Header(default=None, alias="Range"),
+    conn=Depends(_db),
+    _=Depends(require_auth),
+):
+    """
+    Стриминг аудиофайла звонка напрямую из MinIO.
+
+    Поддерживает Range-запросы (206 Partial Content) — нужны плееру для перемотки.
     """
     call = _find_call(conn, call_id)
     if not call.get("file_path"):
         raise HTTPException(status_code=404, detail="Аудиофайл ещё не загружен")
+    key = call["file_path"]
 
     try:
-        obj = _minio.get_object(Bucket=BUCKET, Key=call["file_path"])
+        size = _minio.head_object(Bucket=BUCKET, Key=key)["ContentLength"]
+        byte_range = _parse_range(range_header, size) if range_header and size else None
+        if byte_range:
+            obj = _minio.get_object(Bucket=BUCKET, Key=key, Range=f"bytes={byte_range[0]}-{byte_range[1]}")
+        else:
+            obj = _minio.get_object(Bucket=BUCKET, Key=key)
     except ClientError:
         raise HTTPException(status_code=404, detail="Файл не найден в хранилище")
-
-    content_length = obj.get("ContentLength", 0)
 
     def _stream():
         while True:
@@ -371,16 +406,17 @@ def get_audio(call_id: str, conn=Depends(_db), _=Depends(require_auth)):
                 break
             yield chunk
 
-    filename = f"{call_id}.mp3"
-    return StreamingResponse(
-        _stream(),
-        media_type="audio/mpeg",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Length": str(content_length),
-            "Accept-Ranges": "bytes",
-        },
-    )
+    ext = os.path.splitext(key)[1] or ".mp3"
+    media_type = obj.get("ContentType") or mimetypes.guess_type(key)[0] or "audio/mpeg"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{call_id}{ext}"',
+        "Content-Length": str(obj["ContentLength"]),
+        "Accept-Ranges": "bytes",
+    }
+    if byte_range:
+        headers["Content-Range"] = f"bytes {byte_range[0]}-{byte_range[1]}/{size}"
+        return StreamingResponse(_stream(), status_code=206, media_type=media_type, headers=headers)
+    return StreamingResponse(_stream(), media_type=media_type, headers=headers)
 
 
 # ── Транскрипция ──────────────────────────────────────────────
