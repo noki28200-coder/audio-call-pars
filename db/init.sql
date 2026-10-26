@@ -1,6 +1,10 @@
 -- ============================================================
 -- Схема базы данных: Система обработки записей звонков
 -- PostgreSQL 16+
+--
+-- Скрипт идемпотентный: сервис db-migrate выполняет его при каждом
+-- запуске стека, поэтому изменения схемы доезжают и до существующей БД.
+-- Новые колонки добавлять через ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -28,7 +32,7 @@ CREATE TABLE IF NOT EXISTS calls (
     file_size_bytes     BIGINT,
 
     -- Статус обработки
-    -- pending → stored → transcribed → analyzed
+    -- pending → stored → transcribing → transcribed → analyzing → analyzed
     -- failed_download | failed_transcription | failed_analysis
     status              VARCHAR(50)  NOT NULL DEFAULT 'pending',
 
@@ -65,6 +69,14 @@ CREATE INDEX IF NOT EXISTS idx_calls_phone_from       ON calls(phone_from);
 CREATE INDEX IF NOT EXISTS idx_calls_phone_to         ON calls(phone_to);
 CREATE INDEX IF NOT EXISTS idx_calls_start_time       ON calls(start_time DESC);
 
+-- ── Повторы обработки ────────────────────────────────────────
+-- Сколько раз текущий этап завершался ошибкой. Звонок в failed_*
+-- повторяется, пока retry_count < MAX_RETRIES (по умолчанию 3).
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+
+-- Для sweeper'а: поиск звонков по статусу и времени последнего изменения
+CREATE INDEX IF NOT EXISTS idx_calls_status_updated   ON calls(status, updated_at);
+
 -- ── Журнал операций и ошибок ─────────────────────────────────
 CREATE TABLE IF NOT EXISTS call_logs (
     id          BIGSERIAL    PRIMARY KEY,
@@ -95,7 +107,7 @@ CREATE TRIGGER trg_calls_updated_at
     BEFORE UPDATE ON calls
     FOR EACH ROW EXECUTE FUNCTION _fn_update_updated_at();
 
--- ── Начальная запись в лог ───────────────────────────────────
+-- ── Начальная запись в лог (только при первом создании) ──────
 INSERT INTO call_logs (level, stage, message)
-VALUES ('info', 'system', 'База данных инициализирована')
-ON CONFLICT DO NOTHING;
+SELECT 'info', 'system', 'База данных инициализирована'
+WHERE NOT EXISTS (SELECT 1 FROM call_logs WHERE stage = 'system');

@@ -13,7 +13,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-callspassword}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-callsuser} -d ${POSTGRES_DB:-callsdb}"]
       interval: 10s
@@ -22,12 +21,29 @@ services:
       start_period: 10s
     # Не выставляем порт наружу — доступ только внутри сети
 
+  # Применяет db/init.sql при каждом запуске (скрипт идемпотентный),
+  # чтобы изменения схемы доезжали и до уже существующей БД.
+  db-migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST:     postgres
+      PGDATABASE: ${POSTGRES_DB:-callsdb}
+      PGUSER:     ${POSTGRES_USER:-callsuser}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-callspassword}
+    volumes:
+      - ./db/init.sql:/init.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-q", "-f", "/init.sql"]
+    restart: "no"
+
   minio:
     image: quay.io/minio/minio:RELEASE.2024-07-04T14-25-45Z
     restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"   # Веб-консоль MinIO
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"   # Веб-консоль MinIO (только с этой машины)
     environment:
       MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
@@ -110,7 +126,7 @@ services:
     image: ollama/ollama:latest
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     environment:
       OLLAMA_KEEP_ALIVE: -1
     volumes:
@@ -131,8 +147,8 @@ services:
     build: ./api
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       minio-init:
@@ -152,13 +168,16 @@ services:
       retries: 5
       start_period: 15s
 
-  # ── Сборщик записей из МангоОфис (Go) ──────────────────────
+  # ── Сборщик записей из МангоОфис (Go, pipeline/cmd/collector)
   mango-collector:
-    build: ./mango-collector-go
+    build:
+      context: ./pipeline
+      args:
+        SERVICE: collector
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       minio-init:
@@ -175,6 +194,7 @@ services:
       MANGO_API_URL:            ${MANGO_API_URL:-https://app.mango-office.ru/vpbx}
       POLL_INTERVAL_SECONDS:    ${POLL_INTERVAL_SECONDS:-300}
       LOOKBACK_MINUTES:         ${LOOKBACK_MINUTES:-10}
+      MAX_RETRIES:              ${MAX_RETRIES:-3}
 
   # ── WhisperX ML-сервис (Python, только инференс) ────────────
   whisperx-service:
@@ -191,13 +211,16 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Транскрибация звонков (Go) ───────────────────────────────
+  # ── Транскрибация звонков (Go, pipeline/cmd/transcriber) ────
   transcriber:
-    build: ./transcriber-go
+    build:
+      context: ./pipeline
+      args:
+        SERVICE: transcriber
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       minio-init:
@@ -213,14 +236,18 @@ services:
       MINIO_BUCKET:     ${MINIO_BUCKET:-call-audios}
       WHISPERX_URL:     http://whisperx-service:8001
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      MAX_RETRIES:      ${MAX_RETRIES:-3}
 
-  # ── Анализ транскрипций (Go + Ollama / Gemma) ────────────────
+  # ── Анализ транскрипций (Go + Ollama / Gemma, pipeline/cmd/analyzer)
   analyzer:
-    build: ./analyzer-go
+    build:
+      context: ./pipeline
+      args:
+        SERVICE: analyzer
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       ollama:
@@ -231,6 +258,7 @@ services:
       OLLAMA_HOST:      http://ollama:11434
       OLLAMA_MODEL:     ${OLLAMA_MODEL:-gemma3:4b}
       CRM_WEBHOOK_URL:  ${CRM_WEBHOOK_URL:-}
+      MAX_RETRIES:      ${MAX_RETRIES:-3}
 
   # ── Nginx: точка входа ──────────────────────────────────────
   nginx:
