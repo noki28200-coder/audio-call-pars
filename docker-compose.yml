@@ -113,7 +113,7 @@ services:
     restart: "no"
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.12.6
     restart: unless-stopped
     ports:
       - "127.0.0.1:11434:11434"
