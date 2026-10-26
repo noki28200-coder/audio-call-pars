@@ -609,15 +609,15 @@
   </main>
 </div>
 
+<script src="api-key.js"></script>
 <script>
 // ========================
 // CONFIG
 // ========================
-const API_KEY = 'QtEAKkjfW9UNDDT8o-FWOFYwKriwR0VkF8b_1THFp60';
-const HEADERS = { 'X-API-Key': API_KEY };
+// API-ключ вводится в поле в шапке (api-key.js)
 
 async function apiFetch(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await fetch(url, { headers: { 'X-API-Key': getApiKey() } });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -1001,6 +1001,8 @@ function renderBarChart() {
     transcribed:         colors.cyan,
     stored:              colors.blue,
     pending:             colors.purple,
+    transcribing:        colors.purple,
+    analyzing:           colors.purple,
     failed_download:     colors.red,
     failed_transcription:colors.orange,
     failed_analysis:     colors.red,
@@ -1010,6 +1012,8 @@ function renderBarChart() {
     transcribed:         'Транскрибирован',
     stored:              'Сохранён',
     pending:             'Ожидание',
+    transcribing:        'Транскрибируется',
+    analyzing:           'Анализируется',
     failed_download:     'Ош. загрузки',
     failed_transcription:'Ош. транскрипции',
     failed_analysis:     'Ош. анализа',

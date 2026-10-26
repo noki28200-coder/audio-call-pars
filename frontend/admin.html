@@ -950,7 +950,7 @@
     color: var(--accent-red);
   }
 
-  .status-badge.pending {
+  .status-badge.pending, .status-badge.transcribing, .status-badge.analyzing {
     background: rgba(139,92,246,0.12);
     color: var(--accent-purple);
   }
@@ -1863,15 +1863,14 @@
 <!-- Toast Container -->
 <div class="toast-container" id="toastContainer"></div>
 
+<script src="api-key.js"></script>
 <script>
 // ========================
 // CONFIG
 // ========================
-const API_KEY = 'QtEAKkjfW9UNDDT8o-FWOFYwKriwR0VkF8b_1THFp60';
-const HEADERS = { 'X-API-Key': API_KEY };
-
+// API-ключ вводится в поле в шапке (api-key.js)
 async function apiFetch(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await fetch(url, { headers: { 'X-API-Key': getApiKey() } });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -2501,18 +2500,19 @@ async function showCallDetail(id) {
   // Analysis tab — lazy load
   document.getElementById('tabAnalysis').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);">Загрузка аналитики…</div>';
 
-  // Audio tab
+  // Audio tab. <audio> не умеет слать заголовки, поэтому ключ идёт в параметре api_key.
+  const audioUrl = `/calls/${encodeURIComponent(id)}/audio?api_key=${encodeURIComponent(getApiKey())}`;
   document.getElementById('tabAudio').innerHTML = `
     <div class="audio-player-wrap">
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Аудиозапись звонка</p>
-      <audio controls preload="metadata" src="/calls/${encodeURIComponent(id)}/audio"
+      <audio controls preload="metadata" src="${audioUrl}"
         style="width:100%;border-radius:8px;" onerror="this.parentElement.innerHTML='<p style=color:var(--accent-red)>Аудиофайл недоступен</p>'">
       </audio>
     </div>`;
 
   const dlBtn = document.getElementById('audioDownloadBtn');
   dlBtn.style.display = 'inline-flex';
-  dlBtn.onclick = () => { window.location.href = `/calls/${encodeURIComponent(id)}/audio`; };
+  dlBtn.onclick = () => { window.location.href = audioUrl; };
 
   // Fetch transcript + analysis in background
   Promise.all([
@@ -2642,7 +2642,9 @@ function getStatusLabel(status) {
   const labels = {
     pending: 'Ожидание',
     stored: 'Сохранён',
+    transcribing: 'Транскрибируется',
     transcribed: 'Транскрибирован',
+    analyzing: 'Анализируется',
     analyzed: 'Проанализирован',
     failed_download: 'Ошибка загрузки',
     failed_transcription: 'Ошибка транскрипции',
@@ -2750,7 +2752,7 @@ async function submitImport() {
     const uploadResp = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/calls/upload');
-      xhr.setRequestHeader('X-API-Key', API_KEY);
+      xhr.setRequestHeader('X-API-Key', getApiKey());
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) {
           const pct = Math.round(e.loaded / e.total * 100);
