@@ -11,6 +11,7 @@
 //	GET  /calls/{call_id}/status        — только статус (легковесный)
 //	GET  /admin/stats                   — статистика для дашборда
 //	GET  /admin/logs                    — журнал операций и ошибок
+//	*    /admin/methodologies...         — методики анализа (см. methodology.go)
 //	GET  /health                        — health check (без авторизации)
 //
 // Авторизация: заголовок X-API-Key или параметр ?api_key= (ключ из API_KEY).
@@ -27,6 +28,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"callparser/internal/app"
+	"callparser/internal/llm"
+	"callparser/internal/methodology"
 	"callparser/internal/objstore"
 	"callparser/internal/queue"
 	"callparser/internal/store"
@@ -38,7 +41,12 @@ type server struct {
 	bucket string
 	kc     *kgo.Client
 	apiKey string
+	// generate составляет методику из текста админа (в тестах — заглушка)
+	generate func(ctx context.Context, sourceText string) (*methodology.Methodology, error)
 }
+
+// generateTimeout — сколько ждём, пока модель составит методику.
+const generateTimeout = 10 * time.Minute
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
@@ -60,6 +68,15 @@ func (s *server) routes() http.Handler {
 
 	mux.HandleFunc("GET /admin/stats", auth(s.getStats))
 	mux.HandleFunc("GET /admin/logs", auth(s.getLogs))
+
+	mux.HandleFunc("GET /admin/methodologies", auth(s.listMethodologies))
+	mux.HandleFunc("POST /admin/methodologies", auth(s.createMethodology))
+	mux.HandleFunc("POST /admin/methodologies/extract-text", auth(s.extractMethodologyText))
+	mux.HandleFunc("POST /admin/methodologies/generate", auth(s.generateMethodology))
+	mux.HandleFunc("GET /admin/methodologies/{id}", auth(s.getMethodology))
+	mux.HandleFunc("PUT /admin/methodologies/{id}", auth(s.updateMethodology))
+	mux.HandleFunc("DELETE /admin/methodologies/{id}", auth(s.deleteMethodology))
+	mux.HandleFunc("POST /admin/methodologies/{id}/activate", auth(s.activateMethodology))
 
 	return logRequests(mux)
 }
@@ -97,7 +114,17 @@ func main() {
 		app.Fatal("kafka", err)
 	}
 
-	s := &server{db: db, s3: s3, bucket: s3Cfg.Bucket, kc: kc, apiKey: apiKey}
+	// Модель нужна только для составления методик: API работает и без неё
+	model := llm.New(
+		app.Getenv("OLLAMA_HOST", "http://host.docker.internal:11434"),
+		app.Getenv("OLLAMA_MODEL", "qwen3.5:9b"),
+		generateTimeout,
+	)
+	generate := func(ctx context.Context, text string) (*methodology.Methodology, error) {
+		return methodology.Generate(ctx, model, text)
+	}
+
+	s := &server{db: db, s3: s3, bucket: s3Cfg.Bucket, kc: kc, apiKey: apiKey, generate: generate}
 	srv := &http.Server{
 		Addr:              ":" + app.Getenv("PORT", "8000"),
 		Handler:           s.routes(),

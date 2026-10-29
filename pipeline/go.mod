@@ -5,8 +5,10 @@ go 1.23
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.2
+	github.com/ledongthuc/pdf v0.0.0-20240201131950-da5b75280b06
 	github.com/minio/minio-go/v7 v7.0.82
 	github.com/twmb/franz-go v1.18.1
+	golang.org/x/text v0.21.0
 )
 
 require (
@@ -26,5 +28,4 @@ require (
 	golang.org/x/net v0.30.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
 )

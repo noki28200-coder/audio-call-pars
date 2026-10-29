@@ -58,6 +58,7 @@ type Methodology struct {
 var (
 	ErrNotFound = errors.New("методика не найдена")
 	ErrNotDraft = errors.New("менять и удалять можно только черновик")
+	ErrInvalid  = errors.New("методика заполнена неверно")
 )
 
 // ── хранение ────────────────────────────────────────────────────
@@ -115,7 +116,7 @@ func CreateDraft(ctx context.Context, db *pgxpool.Pool, org string, m *Methodolo
 	}
 	return scan(db.QueryRow(ctx,
 		`INSERT INTO methodologies (organization_id, version, title, source_text, prompt, criteria, status)
-		 VALUES ($1, (SELECT COALESCE(MAX(version), 0) + 1 FROM methodologies WHERE organization_id = $1),
+		 VALUES ($1::text, (SELECT COALESCE(MAX(version), 0) + 1 FROM methodologies WHERE organization_id = $1::text),
 		         $2, $3, $4, $5, 'draft')
 		 RETURNING `+selectCols,
 		org, m.Title, m.SourceText, m.Prompt, m.Criteria))
@@ -194,7 +195,7 @@ func Validate(m *Methodology) error {
 	m.Title = strings.TrimSpace(m.Title)
 	m.Prompt = strings.TrimSpace(m.Prompt)
 	if m.Prompt == "" {
-		return errors.New("промпт не может быть пустым")
+		return fmt.Errorf("%w: промпт не может быть пустым", ErrInvalid)
 	}
 	criteria := make([]Criterion, 0, len(m.Criteria))
 	for _, c := range m.Criteria {
@@ -208,10 +209,10 @@ func Validate(m *Methodology) error {
 		criteria = append(criteria, c)
 	}
 	if len(criteria) == 0 {
-		return errors.New("нужен хотя бы один критерий")
+		return fmt.Errorf("%w: нужен хотя бы один критерий", ErrInvalid)
 	}
 	if len(criteria) > MaxCriteria {
-		return fmt.Errorf("слишком много критериев: %d (максимум %d)", len(criteria), MaxCriteria)
+		return fmt.Errorf("%w: слишком много критериев — %d (максимум %d)", ErrInvalid, len(criteria), MaxCriteria)
 	}
 	m.Criteria = criteria
 	return nil
@@ -271,7 +272,7 @@ var generateSchema = map[string]any{
 func Generate(ctx context.Context, model *llm.Client, sourceText string) (*Methodology, error) {
 	sourceText = strings.TrimSpace(sourceText)
 	if sourceText == "" {
-		return nil, errors.New("текст методики пустой")
+		return nil, fmt.Errorf("%w: текст методики пустой", ErrInvalid)
 	}
 	text := sourceText
 	if r := []rune(text); len(r) > MaxSourceRunes {

@@ -169,6 +169,8 @@ services:
         condition: service_completed_successfully
       s3:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       POSTGRES_DSN:     postgresql://${POSTGRES_USER:-callsuser}:${POSTGRES_PASSWORD:-callspassword}@postgres:5432/${POSTGRES_DB:-callsdb}
       KAFKA_BOOTSTRAP:  kafka:9092
@@ -177,6 +179,9 @@ services:
       S3_SECRET_KEY:    ${S3_SECRET_KEY:-s3admin-secret}
       S3_BUCKET:        ${S3_BUCKET:-call-audios}
       API_KEY:          ${API_KEY:-dev-insecure-key}
+      # Модель нужна API, чтобы составлять методики анализа из правил компании
+      OLLAMA_HOST:      ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL:     ${OLLAMA_MODEL:-qwen3.5:9b}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8000/health || exit 1"]
       interval: 10s

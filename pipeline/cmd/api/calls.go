@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode/utf8"
+
+	"callparser/internal/methodology"
 )
 
 var errCallNotFound = errors.New("звонок не найден")
@@ -114,6 +117,8 @@ func (s *server) getAnalysis(w http.ResponseWriter, r *http.Request) {
 		"score":             call["analysis_score"],
 		"topics":            orEmpty(call["analysis_topics"]),
 		"call_outcome":      call["analysis_call_outcome"],
+		"criteria":          orEmpty(call["analysis_criteria"]),
+		"methodology":       s.methodologyRef(r.Context(), call["analysis_methodology_id"]),
 		"analyzed_at":       call["analyzed_at"],
 		"metadata": map[string]any{
 			"employee_id":      call["employee_id"],
@@ -122,6 +127,21 @@ func (s *server) getAnalysis(w http.ResponseWriter, r *http.Request) {
 			"direction":        call["direction"],
 		},
 	})
+}
+
+// methodologyRef — версия и название методики, по которой оценён звонок
+// (nil — стандартный промпт).
+func (s *server) methodologyRef(ctx context.Context, id any) map[string]any {
+	mid, ok := id.(int64)
+	if !ok {
+		return nil
+	}
+	m, err := methodology.Get(ctx, s.db.DB, methodology.DefaultOrg, mid)
+	if err != nil {
+		slog.Warn("методика звонка", "id", mid, "err", err)
+		return map[string]any{"id": mid}
+	}
+	return map[string]any{"id": m.ID, "version": m.Version, "title": m.Title}
 }
 
 // ── список звонков ──────────────────────────────────────────────

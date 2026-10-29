@@ -69,6 +69,9 @@ func TestOpenAPISpecCoversRoutes(t *testing.T) {
 		"post /calls/upload", "get /calls", "get /calls/{call_id}", "get /calls/{call_id}/status",
 		"get /calls/{call_id}/audio", "get /calls/{call_id}/transcript", "get /calls/{call_id}/analysis",
 		"get /admin/stats", "get /admin/logs", "get /health",
+		"get /admin/methodologies", "post /admin/methodologies", "post /admin/methodologies/extract-text",
+		"post /admin/methodologies/generate", "get /admin/methodologies/{id}", "put /admin/methodologies/{id}",
+		"delete /admin/methodologies/{id}", "post /admin/methodologies/{id}/activate",
 	} {
 		method, path, _ := strings.Cut(route, " ")
 		if spec.Paths[path][method] == nil {
@@ -128,7 +131,7 @@ func setupServer(t *testing.T) (*server, http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.DB.Exec(ctx, `DROP TABLE IF EXISTS calls, call_logs`); err != nil {
+	if _, err := db.DB.Exec(ctx, `DROP TABLE IF EXISTS calls, call_logs, methodologies`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.DB.Exec(ctx, string(schema)); err != nil {
