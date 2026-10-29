@@ -4,8 +4,9 @@
 //
 //	Kafka 'transcriptions-done' {call_id}
 //	  → взять транскрипцию и метаданные из PostgreSQL
-//	  → вызвать Ollama API
-//	  → обновить PostgreSQL (analysis_*, status='analyzed')
+//	  → разметить реплики: сотрудник / клиент
+//	  → проанализировать по активной методике компании (или стандартным промптом)
+//	  → обновить PostgreSQL (analysis_*, роли в transcript_segments, status='analyzed')
 //	  → отправить в Kafka 'analysis-done' (полные данные звонка)
 //	  → опционально: POST вебхук в CRM
 package main
@@ -25,12 +26,15 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"callparser/internal/app"
+	"callparser/internal/llm"
+	"callparser/internal/methodology"
 	"callparser/internal/queue"
 	"callparser/internal/store"
 	"callparser/internal/worker"
 )
 
-// ollamaTimeout — сколько ждём ответа модели на одну транскрипцию.
+// ollamaTimeout — сколько ждём ответа модели на один запрос
+// (на звонок их два: разметка ролей и анализ).
 const ollamaTimeout = 10 * time.Minute
 
 // callRow — данные звонка, нужные для анализа и исходящего события.
@@ -75,7 +79,7 @@ func loadCall(ctx context.Context, db *store.Store, callID string) (*callRow, er
 type analyzer struct {
 	db         *store.Store
 	kc         *kgo.Client
-	ollama     *ollamaClient
+	model      *llm.Client
 	crmWebhook string
 }
 
@@ -91,10 +95,51 @@ func (a *analyzer) process(ctx context.Context, callID string) error {
 		return worker.Permanent(fmt.Errorf("пустая транскрипция: речь не распознана"))
 	}
 
-	prompt := buildPrompt(call.EmployeeName, call.EmployeeID, call.Direction, call.Duration, call.Transcript)
-	analysis, err := a.ollama.analyze(ctx, prompt)
+	var segs []segment
+	if err := json.Unmarshal(call.Segments, &segs); err != nil {
+		slog.Warn("не удалось разобрать сегменты", "call_id", callID, "err", err)
+		segs = nil
+	}
+
+	// Роли: без них анализ всё равно возможен, поэтому ошибка не фатальна
+	transcript := call.Transcript
+	if !hasRoles(segs) && len(segs) > 0 {
+		turns, err := assignRoles(ctx, a.model, segs, call.Direction)
+		switch {
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case err != nil:
+			slog.Warn("роли не размечены", "call_id", callID, "err", err)
+			a.db.Log(ctx, callID, "warning", "analysis", "Роли сотрудник/клиент не размечены: "+err.Error())
+		default:
+			segs = turns
+		}
+	}
+	if hasRoles(segs) {
+		transcript = dialogText(segs)
+	}
+
+	m, err := methodology.Active(ctx, a.db.DB, methodology.DefaultOrg)
+	if err != nil {
+		return fmt.Errorf("db methodology: %w", err)
+	}
+	var analysis *AnalysisResult
+	if m != nil {
+		analysis, err = analyzeWithMethodology(ctx, a.model, m, call, transcript)
+	} else {
+		analysis, err = analyzeDefault(ctx, a.model, call, transcript)
+	}
 	if err != nil {
 		return fmt.Errorf("ollama: %w", err)
+	}
+
+	segmentsJSON, _ := json.Marshal(segs)
+	if segs == nil {
+		segmentsJSON = call.Segments
+	}
+	var criteriaJSON []byte
+	if analysis.Criteria != nil {
+		criteriaJSON, _ = json.Marshal(analysis.Criteria)
 	}
 
 	violations, _ := json.Marshal(analysis.ScriptViolations)
@@ -111,6 +156,9 @@ func (a *analyzer) process(ctx context.Context, callID string) error {
 		     analysis_score = $7,
 		     analysis_topics = $8,
 		     analysis_call_outcome = $9,
+		     analysis_methodology_id = $11,
+		     analysis_criteria = $12,
+		     transcript_segments = $13,
 		     analyzed_at = NOW()
 		 WHERE call_id = $10`,
 		store.StatusAnalyzed,
@@ -123,12 +171,19 @@ func (a *analyzer) process(ctx context.Context, callID string) error {
 		topics,
 		analysis.CallOutcome,
 		callID,
+		analysis.MethodologyID,
+		criteriaJSON,
+		segmentsJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("db update: %w", err)
 	}
+	how := "стандартный промпт"
+	if m != nil {
+		how = fmt.Sprintf("методика v%d", m.Version)
+	}
 	a.db.Log(ctx, callID, "info", "analysis",
-		fmt.Sprintf("Анализ завершён: score=%d, sentiment=%s", analysis.Score, analysis.Sentiment))
+		fmt.Sprintf("Анализ завершён (%s): score=%d, sentiment=%s", how, analysis.Score, analysis.Sentiment))
 
 	// Анализ уже сохранён: сбои уведомлений ниже не делают этап неудачным.
 	a.notify(ctx, call, analysis)
@@ -204,11 +259,11 @@ func main() {
 	defer stop()
 
 	postgresDSN := app.MustEnv("POSTGRES_DSN")
-	ollama := &ollamaClient{
-		host:  app.Getenv("OLLAMA_HOST", "http://host.docker.internal:11434"),
-		model: app.Getenv("OLLAMA_MODEL", "qwen3.5:9b"),
-		http:  &http.Client{Timeout: ollamaTimeout},
-	}
+	model := llm.New(
+		app.Getenv("OLLAMA_HOST", "http://host.docker.internal:11434"),
+		app.Getenv("OLLAMA_MODEL", "qwen3.5:9b"),
+		ollamaTimeout,
+	)
 
 	db, err := store.New(ctx, postgresDSN)
 	if err != nil {
@@ -227,18 +282,18 @@ func main() {
 	// До скачивания модели: оно может идти десятки минут, сервис при этом жив.
 	app.Heartbeat(ctx, db.DB.Ping, kc.Ping)
 
-	if !app.WaitHTTP(ctx, "ollama", ollama.host+"/api/tags", 20, 5*time.Second) && ctx.Err() != nil {
+	if !app.WaitHTTP(ctx, "ollama", model.Host+"/api/tags", 20, 5*time.Second) && ctx.Err() != nil {
 		return
 	}
 	// Без модели анализ невозможен: падаем, Docker перезапустит сервис.
-	if err := ollama.ensureModel(ctx); err != nil {
+	if err := model.EnsureModel(ctx); err != nil {
 		app.Fatal("модель Ollama недоступна", err)
 	}
 
 	a := &analyzer{
 		db:         db,
 		kc:         kc,
-		ollama:     ollama,
+		model:      model,
 		crmWebhook: app.Getenv("CRM_WEBHOOK_URL", ""),
 	}
 
@@ -249,7 +304,7 @@ func main() {
 		Ready:      store.StatusTranscribed,
 		Working:    store.StatusAnalyzing,
 		Failed:     store.StatusFailedAnalysis,
-		StuckAfter: 3 * ollamaTimeout,
+		StuckAfter: 3 * ollamaTimeout, // два запроса к модели + запас
 		Process:    a.process,
 	}, db, kc)
 	slog.Info("остановлен")

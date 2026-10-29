@@ -40,10 +40,10 @@ CREATE TABLE IF NOT EXISTS calls (
     transcript_text                 TEXT,
     transcript_language             VARCHAR(10),
     transcript_language_probability REAL,
-    transcript_segments             JSONB,                  -- массив [{start,end,text}]
+    transcript_segments             JSONB,                  -- массив [{start,end,text,speaker}]
     transcribed_at                  TIMESTAMPTZ,
 
-    -- Анализ (Ollama / Gemma)
+    -- Анализ (Ollama)
     analysis_summary            TEXT,
     analysis_sentiment          VARCHAR(20),                -- positive | neutral | negative
     analysis_script_compliance  BOOLEAN,
@@ -76,6 +76,30 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 
 
 -- Для sweeper'а: поиск звонков по статусу и времени последнего изменения
 CREATE INDEX IF NOT EXISTS idx_calls_status_updated   ON calls(status, updated_at);
+
+-- ── Методики анализа ─────────────────────────────────────────
+-- Правила разговора компании → промпт и критерии для анализатора.
+-- draft → active (одна на организацию) → archived; откат = активировать архивную.
+CREATE TABLE IF NOT EXISTS methodologies (
+    id               BIGSERIAL    PRIMARY KEY,
+    organization_id  VARCHAR(100) NOT NULL DEFAULT 'default',  -- на будущее: несколько компаний
+    version          INTEGER      NOT NULL,
+    title            VARCHAR(500) NOT NULL DEFAULT '',
+    source_text      TEXT         NOT NULL,                    -- исходный текст от админа
+    prompt           TEXT         NOT NULL,                    -- инструкция для анализатора
+    criteria         JSONB        NOT NULL DEFAULT '[]',       -- [{id,name,description,weight}]
+    status           VARCHAR(20)  NOT NULL DEFAULT 'draft',    -- draft | active | archived
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    activated_at     TIMESTAMPTZ,
+    UNIQUE (organization_id, version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_methodologies_one_active
+    ON methodologies(organization_id) WHERE status = 'active';
+
+-- По какой методике оценён звонок и результат по каждому критерию
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS analysis_methodology_id BIGINT REFERENCES methodologies(id);
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS analysis_criteria JSONB;  -- [{id,name,weight,result,quote,comment}]
 
 -- ── Журнал операций и ошибок ─────────────────────────────────
 CREATE TABLE IF NOT EXISTS call_logs (
