@@ -7,7 +7,7 @@ The system processes phone call recordings automatically:
 1. **Collect** – new recordings from MangoOffice or via upload
 2. **Store** – audio files in S3 storage (SeaweedFS)
 3. **Transcribe** – speech to text with Whisper
-4. **Analyze** – local language model (Ollama, `qwen3.5:9b`): summary, score 1–10, sentiment, rule violations, next steps
+4. **Analyze** – local language model (Ollama, `qwen3.5:9b`): who speaks (employee / client), checklist against the company's own rules, score 1–10, sentiment, summary, next steps
 5. **Deliver** – results via REST API, admin panel and an optional CRM webhook
 
 All data stays on your own server – no external AI services are used.
@@ -46,10 +46,15 @@ docker compose ps             # all services should be "healthy"
 |---|---|
 | http://localhost:8080/admin.html | Admin panel (enter the API key at the top) |
 | http://localhost:8080/analytics.html | Analytics |
+| http://localhost:8080/methodology.html | Analysis methodology (company rules → AI criteria) |
 | http://localhost:8080/docs | Interactive API docs (Swagger) |
 | http://localhost:8888/buckets/call-audios/ | S3 file browser |
 
 Without Ollama on the host: `docker compose --profile docker-ollama up -d` and set `OLLAMA_HOST=http://ollama:11434` in `.env` (CPU only).
+
+## Analysis methodology
+
+Each company scores calls by its own rules. On the **Methodology** page an admin pastes the rules (or uploads a `.txt`, `.docx` or `.pdf`), the local model turns them into instructions for the AI analyst and a list of checkable criteria with weights (critical / important / optional). The admin reviews and edits the draft and applies it (two confirmations). New calls are then scored against these criteria with a quote from the call for each; earlier versions stay in the history and can be restored. A sample: [examples/methodology-sales.md](examples/methodology-sales.md).
 
 ## Configuration (`.env`)
 
@@ -83,6 +88,7 @@ Authentication via the `X-API-Key` header (or `?api_key=` for audio links). Full
 | `GET` | `/calls/{id}/transcript` | Transcript with timestamps |
 | `GET` | `/calls/{id}/analysis` | AI analysis |
 | `GET` | `/admin/stats`, `/admin/logs` | Statistics and log |
+| `*` | `/admin/methodologies…` | Analysis methodologies: generate, edit, apply, roll back |
 
 ```bash
 curl -H "X-API-Key: $API_KEY" -F file=@call.mp3 http://localhost:8080/calls/upload

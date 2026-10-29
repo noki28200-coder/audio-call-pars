@@ -345,6 +345,10 @@ failed_download   failed_transcription        failed_analysis
 }
 ```
 
+После анализа сегменты становятся репликами с полем `speaker`: `employee` (сотрудник)
+или `client` (клиент), например `{"start": 0.0, "end": 4.1, "text": "...", "speaker": "employee"}`.
+Если разметить роли не удалось, поля `speaker` нет.
+
 **Ошибки:**
 - `404` — транскрипция ещё не готова (ответ содержит текущий `status`)
 
@@ -371,6 +375,13 @@ failed_download   failed_transcription        failed_analysis
   "score": 8,
   "topics": ["тарифы", "подключение"],
   "call_outcome": "callback",
+  "criteria": [
+    {"id": "c1", "name": "Назвал своё имя и компанию", "weight": 3,
+     "result": "passed", "quote": "Компания Апогей, меня зовут Анна", "comment": "Представился в начале"},
+    {"id": "c2", "name": "Договорился о следующем шаге", "weight": 3,
+     "result": "failed", "quote": "", "comment": "Разговор закончился без договорённости"}
+  ],
+  "methodology": {"id": 4, "version": 2, "title": "Продажи: входящие звонки"},
   "analyzed_at": "2024-07-15T10:38:45Z",
   "metadata": {
     "employee_id": "42",
@@ -386,6 +397,13 @@ failed_download   failed_transcription        failed_analysis
 - `script_compliance`: `true` (соответствует скрипту) | `false` (есть нарушения)
 - `score`: 1–10
 - `call_outcome`: `sold` | `callback` | `rejected` | `escalated` | `consultation` | `other`
+- `criteria` — чек-лист по методике компании (пустой массив, если методика не применялась):
+  `result` — `passed` | `failed` | `na` (не применим), `weight` — 3 критично, 2 важно, 1 желательно
+- `methodology` — по какой версии методики оценён звонок (`null` — стандартный промпт).
+  При анализе по методике `score`, `script_compliance` и `script_violations` считаются из критериев:
+  доля выполненных с учётом весов, провал критичного ограничивает оценку 4 баллами.
+
+Методики управляются через `/admin/methodologies` — см. `/docs`, готовая страница — `frontend/methodology.html`.
 
 **Ошибки:**
 - `404` — анализ ещё не готов
@@ -726,8 +744,8 @@ failed_analysis   → "Ошибка анализа"           (warning)
 |---|---|
 | Скачивание из МангоОфис | 5–30 сек |
 | Транскрибация (Whisper medium) | 1–3 мин |
-| Анализ (qwen3.5:9b) | 30–90 сек |
-| **Итого** | **2–5 мин** |
+| Разметка ролей + анализ по методике (qwen3.5:9b) | 2–5 мин |
+| **Итого** | **3–8 мин** |
 
 Рекомендуемый интервал polling для статуса: **5–10 секунд**
 

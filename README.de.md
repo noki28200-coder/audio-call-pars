@@ -7,7 +7,7 @@ Das System verarbeitet Aufzeichnungen von Telefonaten automatisch:
 1. **Abholen** – neue Aufnahmen aus MangoOffice oder per Upload
 2. **Speichern** – Audiodateien im S3-Speicher (SeaweedFS)
 3. **Transkribieren** – Sprache zu Text mit Whisper
-4. **Analysieren** – lokales Sprachmodell (Ollama, `qwen3.5:9b`): Zusammenfassung, Bewertung 1–10, Stimmung, Regelverstöße, nächste Schritte
+4. **Analysieren** – lokales Sprachmodell (Ollama, `qwen3.5:9b`): wer spricht (Mitarbeiter / Kunde), Checkliste nach den eigenen Regeln des Unternehmens, Bewertung 1–10, Stimmung, Zusammenfassung, nächste Schritte
 5. **Bereitstellen** – Ergebnisse über REST-API, Admin-Oberfläche und optionalen CRM-Webhook
 
 Alle Daten bleiben auf dem eigenen Server – es werden keine externen KI-Dienste genutzt.
@@ -46,10 +46,15 @@ docker compose ps             # alle Dienste sollten "healthy" sein
 |---|---|
 | http://localhost:8080/admin.html | Admin-Oberfläche (API-Schlüssel oben eingeben) |
 | http://localhost:8080/analytics.html | Auswertungen |
+| http://localhost:8080/methodology.html | Analysemethodik (Unternehmensregeln → KI-Kriterien) |
 | http://localhost:8080/docs | Interaktive API-Dokumentation (Swagger) |
 | http://localhost:8888/buckets/call-audios/ | Dateiansicht des S3-Speichers |
 
 Ohne Ollama auf dem Host: `docker compose --profile docker-ollama up -d` und in `.env` `OLLAMA_HOST=http://ollama:11434` setzen (läuft dann nur auf der CPU).
+
+## Analysemethodik
+
+Jedes Unternehmen bewertet Gespräche nach eigenen Regeln. Auf der Seite **Methodik** fügt ein Admin die Regeln ein (oder lädt `.txt`, `.docx`, `.pdf` hoch); das lokale Modell erstellt daraus Anweisungen für den KI-Analysten und eine Liste prüfbarer Kriterien mit Gewichtung (kritisch / wichtig / wünschenswert). Der Admin prüft und bearbeitet den Entwurf und wendet ihn an (zwei Bestätigungen). Neue Anrufe werden danach anhand dieser Kriterien bewertet, jeweils mit Zitat aus dem Gespräch; frühere Versionen bleiben in der Historie und können wiederhergestellt werden. Beispiel: [examples/methodology-sales.md](examples/methodology-sales.md).
 
 ## Konfiguration (`.env`)
 
@@ -83,6 +88,7 @@ Authentifizierung über den Header `X-API-Key` (für Audio-Links auch `?api_key=
 | `GET` | `/calls/{id}/transcript` | Transkript mit Zeitstempeln |
 | `GET` | `/calls/{id}/analysis` | KI-Analyse |
 | `GET` | `/admin/stats`, `/admin/logs` | Statistik und Protokoll |
+| `*` | `/admin/methodologies…` | Analysemethodiken: erzeugen, bearbeiten, anwenden, zurückrollen |
 
 ```bash
 curl -H "X-API-Key: $API_KEY" -F file=@anruf.mp3 http://localhost:8080/calls/upload
