@@ -96,11 +96,9 @@ curl -H "X-API-Key: $API_KEY" -F file=@call.mp3 http://localhost:8080/calls/uplo
 docker compose logs -f analyzer                 # логи одного сервиса
 docker compose up -d --build api                # пересобрать после изменений кода
 docker compose exec postgres psql -U callsuser -d callsdb   # консоль базы
-
-# Бэкап
-docker compose exec postgres pg_dump -U callsuser callsdb > backup.sql
-docker run --rm -v audio-call-parser-go_s3_data:/data -v "$PWD":/b alpine tar czf /b/s3.tar.gz /data
 ```
+
+**Бэкапы** делаются автоматически: сервис `backup` раз в 24 ч кладёт дамп базы и архив записей в `./backups` и хранит 7 дней (`BACKUP_INTERVAL_HOURS`, `BACKUP_KEEP_DAYS`). Команды восстановления — в [init-scripts/backup.sh](init-scripts/backup.sh).
 
 **Частые проблемы**
 

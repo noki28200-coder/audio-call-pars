@@ -96,11 +96,9 @@ curl -H "X-API-Key: $API_KEY" -F file=@anruf.mp3 http://localhost:8080/calls/upl
 docker compose logs -f analyzer                 # Logs eines Dienstes
 docker compose up -d --build api                # nach Codeänderungen neu bauen
 docker compose exec postgres psql -U callsuser -d callsdb   # Datenbank
-
-# Backup
-docker compose exec postgres pg_dump -U callsuser callsdb > backup.sql
-docker run --rm -v audio-call-parser-go_s3_data:/data -v "$PWD":/b alpine tar czf /b/s3.tar.gz /data
 ```
+
+**Backups** laufen automatisch: Der Dienst `backup` schreibt alle 24 Std. einen Datenbank-Dump und ein Archiv der Aufnahmen nach `./backups` und behält 7 Tage (`BACKUP_INTERVAL_HOURS`, `BACKUP_KEEP_DAYS`). Befehle zur Wiederherstellung stehen in [init-scripts/backup.sh](init-scripts/backup.sh).
 
 **Typische Probleme**
 

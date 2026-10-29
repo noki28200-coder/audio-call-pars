@@ -33,6 +33,9 @@ node_modules/
 audio/*
 !audio/README.md
 
+# Бэкапы БД и записей (персональные данные)
+backups/
+
 # Логи
 *.log
 logs/
