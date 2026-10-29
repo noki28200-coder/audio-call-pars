@@ -104,11 +104,16 @@ services:
     entrypoint: ["/bin/bash", "/create-topics.sh"]
     restart: "no"
 
+  # По умолчанию анализатор использует Ollama, установленную на самой машине
+  # (на Mac она работает на GPU, а в Docker — только на CPU). Этот контейнер —
+  # запасной вариант для сервера без локальной Ollama:
+  #   docker compose --profile docker-ollama up -d
+  #   и в .env: OLLAMA_HOST=http://ollama:11434
   ollama:
     image: ollama/ollama:0.12.6
+    profiles: ["docker-ollama"]
     restart: unless-stopped
-    # Порт наружу не публикуется: анализатор ходит по сети Docker, а 11434
-    # на хосте часто занят локально установленной Ollama
+    # Порт наружу не публикуется: 11434 на хосте занят локальной Ollama
     environment:
       OLLAMA_KEEP_ALIVE: -1
     volumes:
@@ -242,7 +247,7 @@ services:
       retries: 3
       start_period: 2m
 
-  # ── Анализ транскрипций (Go + Ollama / Gemma, pipeline/cmd/analyzer)
+  # ── Анализ транскрипций (Go + Ollama, pipeline/cmd/analyzer)
   analyzer:
     build:
       context: ./pipeline
@@ -254,13 +259,14 @@ services:
         condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
-      ollama:
-        condition: service_healthy
+    extra_hosts:
+      # На Linux host.docker.internal сам не появляется (в Docker Desktop/colima есть)
+      - "host.docker.internal:host-gateway"
     environment:
       POSTGRES_DSN:     postgresql://${POSTGRES_USER:-callsuser}:${POSTGRES_PASSWORD:-callspassword}@postgres:5432/${POSTGRES_DB:-callsdb}
       KAFKA_BOOTSTRAP:  kafka:9092
-      OLLAMA_HOST:      http://ollama:11434
-      OLLAMA_MODEL:     ${OLLAMA_MODEL:-gemma3:4b}
+      OLLAMA_HOST:      ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL:     ${OLLAMA_MODEL:-qwen3.5:9b}
       CRM_WEBHOOK_URL:  ${CRM_WEBHOOK_URL:-}
       MAX_RETRIES:      ${MAX_RETRIES:-3}
     healthcheck:

@@ -1,7 +1,7 @@
 # Система анализа звонков
 
 Микросервисная система автоматической обработки записей звонков:
-скачивает MP3 из МангоОфис → хранит в S3 (SeaweedFS) → транскрибирует через Whisper → анализирует через Ollama/Gemma → отдаёт результаты в CRM через REST API.
+скачивает MP3 из МангоОфис → хранит в S3 (SeaweedFS) → транскрибирует через Whisper → анализирует через локальную LLM (Ollama, qwen3.5:9b) → отдаёт результаты в CRM через REST API.
 
 ## Содержание
 
@@ -40,7 +40,7 @@ mango-collector  (Go)
                 │
        ┌────────┘
        ▼
-   analyzer  (Go) ──► Ollama / Gemma
+   analyzer  (Go) ──► Ollama (qwen3.5:9b)
        │  пишет анализ в PostgreSQL
        ├──► Kafka: analysis-done
        └──► CRM вебхук (опционально)
@@ -74,12 +74,12 @@ CRM / curl ──► POST /calls/upload ──► S3 + PostgreSQL + Kafka: calls
 | `mango-collector` | — | Автоматический опрос МангоОфис API (`pipeline/cmd/collector`) |
 | `transcriber` | — | Транскрибация: S3 → whisperx-service (`pipeline/cmd/transcriber`) |
 | `whisperx-service` | — (внутренний 8001) | HTTP-инференс faster-whisper |
-| `analyzer` | — | LLM-анализ через Ollama/Gemma (`pipeline/cmd/analyzer`) |
+| `analyzer` | — | LLM-анализ через Ollama (`pipeline/cmd/analyzer`) |
 | `db-migrate` | — | Применяет `db/init.sql` при каждом запуске и завершается |
 | `s3` | 9000 (S3 API), **8888** (веб-интерфейс файлов), только `127.0.0.1` | Хранилище MP3 файлов (SeaweedFS, S3-совместимое) |
 | `postgres` | — (только внутри сети) | База данных |
 | `kafka` | — (внутри сети) | Очередь событий (режим KRaft, без Zookeeper) |
-| `ollama` | — (внутренний 11434) | LLM-сервер (Gemma) |
+| `ollama` | — (внутренний 11434) | LLM-сервер в Docker — запасной вариант, профиль `docker-ollama` |
 
 ---
 
@@ -93,9 +93,13 @@ CRM / curl ──► POST /calls/upload ──► S3 + PostgreSQL + Kafka: calls
 | Docker Engine | 24+ | latest |
 | Docker Compose | v2 (встроен в Docker) | — |
 
-Модели (скачиваются автоматически при первом запуске):
-- **Whisper medium** — ~1.5 GB
-- **Gemma 3 4b** — ~3 GB
+Модели:
+- **Whisper medium** — ~1.5 GB (скачивается автоматически при первом запуске)
+- **qwen3.5:9b** — ~6.6 GB. Анализатор по умолчанию ходит в Ollama, установленную
+  на самой машине (`http://host.docker.internal:11434`): на Mac она работает на GPU.
+  Установить [Ollama](https://ollama.com) и скачать модель: `ollama pull qwen3.5:9b`.
+  Без локальной Ollama: `docker compose --profile docker-ollama up -d` и
+  `OLLAMA_HOST=http://ollama:11434` в `.env`.
 
 ---
 
@@ -211,7 +215,8 @@ WHISPER_LANGUAGE=ru
 WHISPER_THREADS=4
 
 # ── Ollama (анализ) ─────────────────────────────────────────────
-OLLAMA_MODEL=gemma3:4b        # или gemma3:12b, llama3:8b, etc.
+OLLAMA_HOST=http://host.docker.internal:11434   # Ollama на этой машине
+OLLAMA_MODEL=qwen3.5:9b       # нужно ~16 GB RAM; слабее машина — qwen3.5:4b
 
 # ── CRM вебхук (опционально) ───────────────────────────────────
 CRM_WEBHOOK_URL=              # оставить пустым если не нужен
@@ -844,14 +849,15 @@ docker compose logs transcriber
 # Смотреть логи analyzer
 docker compose logs analyzer
 
-# Проверить статус Ollama
-docker compose exec ollama ollama list
+# Проверить статус Ollama (на машине)
+ollama list
+curl http://localhost:11434/api/version
 
-# Модель не скачалась — скачать вручную
-docker compose exec ollama ollama pull gemma3:4b
+# Модель не скачана — скачать вручную
+ollama pull qwen3.5:9b
 
 # Не хватает RAM — сменить модель в .env
-# OLLAMA_MODEL=gemma3:4b  (наименее требовательная)
+# OLLAMA_MODEL=qwen3.5:4b  (~3.4 GB)
 ```
 
 ### Проверить очередь в Kafka

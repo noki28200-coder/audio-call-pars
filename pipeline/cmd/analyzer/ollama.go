@@ -38,9 +38,14 @@ const analysisPromptTpl = `Ты — специалист по анализу к�
   "call_outcome": "sold или callback или rejected или escalated или consultation или other"
 }`
 
-// maxTranscriptRunes ограничивает длину транскрипции, чтобы не выйти
-// за контекст модели (~6000 символов ≈ ~1500 токенов).
-const maxTranscriptRunes = 6000
+// maxTranscriptRunes ограничивает длину транскрипции, чтобы не выйти за
+// контекст модели: ~24000 символов русского текста ≈ 8–10 тыс. токенов
+// (примерно 30 минут разговора), остальное место — промпт и ответ.
+const maxTranscriptRunes = 24000
+
+// contextTokens — размер контекста, который просим у Ollama (по умолчанию
+// она выделяет меньше и молча обрезает начало промпта).
+const contextTokens = 16384
 
 func buildPrompt(empName, empID, direction string, duration int, transcript string) string {
 	if empName == "" {
@@ -80,6 +85,25 @@ type AnalysisResult struct {
 var validOutcomes = map[string]bool{
 	"sold": true, "callback": true, "rejected": true,
 	"escalated": true, "consultation": true, "other": true,
+}
+
+// analysisSchema — JSON Schema ответа: Ollama ограничивает генерацию этой
+// схемой, поэтому модель не может вернуть лишний текст или пропустить поле.
+var analysisSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"summary":           map[string]any{"type": "string"},
+		"sentiment":         map[string]any{"type": "string", "enum": []string{"positive", "neutral", "negative"}},
+		"script_compliance": map[string]any{"type": "boolean"},
+		"script_violations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"action_items":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"score":             map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
+		"topics":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"call_outcome": map[string]any{"type": "string",
+			"enum": []string{"sold", "callback", "rejected", "escalated", "consultation", "other"}},
+	},
+	"required": []string{"summary", "sentiment", "script_compliance", "script_violations",
+		"action_items", "score", "topics", "call_outcome"},
 }
 
 // jsonExtractRe находит блок {...} в ответе (модель может обернуть его в ```json).
@@ -135,7 +159,10 @@ func (c *ollamaClient) analyze(ctx context.Context, prompt string) (*AnalysisRes
 		"model":  c.model,
 		"prompt": prompt,
 		"stream": false,
-		"format": "json",
+		"format": analysisSchema,
+		// Режим «размышлений» (qwen3.5 и др.) только замедляет ответ и мешает JSON
+		"think":   false,
+		"options": map[string]any{"num_ctx": contextTokens, "temperature": 0.2},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/generate", bytes.NewReader(reqBody))
 	if err != nil {

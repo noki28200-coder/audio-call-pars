@@ -1,10 +1,10 @@
-// Сервис анализа транскрипций через Ollama/Gemma.
+// Сервис анализа транскрипций через локальную LLM (Ollama, по умолчанию qwen3.5:9b).
 //
 // Pipeline:
 //
 //	Kafka 'transcriptions-done' {call_id}
 //	  → взять транскрипцию и метаданные из PostgreSQL
-//	  → вызвать Ollama API (Gemma)
+//	  → вызвать Ollama API
 //	  → обновить PostgreSQL (analysis_*, status='analyzed')
 //	  → отправить в Kafka 'analysis-done' (полные данные звонка)
 //	  → опционально: POST вебхук в CRM
@@ -31,7 +31,7 @@ import (
 )
 
 // ollamaTimeout — сколько ждём ответа модели на одну транскрипцию.
-const ollamaTimeout = 5 * time.Minute
+const ollamaTimeout = 10 * time.Minute
 
 // callRow — данные звонка, нужные для анализа и исходящего события.
 type callRow struct {
@@ -205,8 +205,8 @@ func main() {
 
 	postgresDSN := app.MustEnv("POSTGRES_DSN")
 	ollama := &ollamaClient{
-		host:  app.Getenv("OLLAMA_HOST", "http://ollama:11434"),
-		model: app.Getenv("OLLAMA_MODEL", "gemma3:4b"),
+		host:  app.Getenv("OLLAMA_HOST", "http://host.docker.internal:11434"),
+		model: app.Getenv("OLLAMA_MODEL", "qwen3.5:9b"),
 		http:  &http.Client{Timeout: ollamaTimeout},
 	}
 
