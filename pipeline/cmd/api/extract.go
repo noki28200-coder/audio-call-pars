@@ -142,12 +142,19 @@ func pdfText(data []byte) (text string, err error) {
 			return "", fmt.Errorf("страница %d: %w", i, err)
 		}
 		for _, row := range rows {
+			var line strings.Builder
 			for j, word := range row.Content {
+				// Пробелы в PDF бывают отдельными элементами, а бывают только
+				// промежутком между словами — тогда вставляем пробел сами
 				if j > 0 {
-					b.WriteString(" ")
+					prev := row.Content[j-1]
+					if word.X-(prev.X+prev.W) > 0.15*word.FontSize {
+						line.WriteString(" ")
+					}
 				}
-				b.WriteString(word.S)
+				line.WriteString(word.S)
 			}
+			b.WriteString(multiSpaceRe.ReplaceAllString(line.String(), " "))
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
@@ -156,6 +163,7 @@ func pdfText(data []byte) (text string, err error) {
 }
 
 var (
+	multiSpaceRe = regexp.MustCompile(` {2,}`)
 	spacesRe     = regexp.MustCompile(`[ \t]+\n`)
 	blankLinesRe = regexp.MustCompile(`\n{3,}`)
 )

@@ -999,6 +999,25 @@
 
   .segment-text { color: var(--text-primary); line-height: 1.5; }
 
+  .segment-speaker {
+    font-size: 11px; font-weight: 600; white-space: nowrap; padding: 1px 8px;
+    border-radius: 999px; height: fit-content; margin-top: 1px;
+  }
+  .segment-speaker.employee { background: #dbeafe; color: #1e40af; }
+  .segment-speaker.client { background: #fef3c7; color: #92400e; }
+
+  .criteria-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .criterion { display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-primary); border: 1px solid var(--border-color); }
+  .criterion-icon { font-weight: 700; width: 18px; text-align: center; flex-shrink: 0; }
+  .criterion.passed .criterion-icon { color: var(--accent-green); }
+  .criterion.failed .criterion-icon { color: var(--accent-red); }
+  .criterion.failed { border-color: #fca5a5; }
+  .criterion.na .criterion-icon { color: var(--text-secondary); }
+  .criterion-name { font-size: 13px; font-weight: 600; }
+  .criterion-weight { font-weight: 400; font-size: 11px; color: var(--text-secondary); margin-left: 6px; }
+  .criterion-quote { font-size: 12px; font-style: italic; margin-top: 4px; }
+  .criterion-comment { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
   .analysis-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;
   }
@@ -1508,6 +1527,10 @@
       <a href="analytics.html" class="nav-item">
         <span class="nav-icon"></span>
         Аналитика
+      </a>
+      <a href="methodology.html" class="nav-item">
+        <span class="nav-icon"></span>
+        Методика анализа
       </a>
       <div class="nav-item nav-item-expandable" onclick="toggleSubmenu(this)">
         <span class="nav-icon"></span>
@@ -2540,9 +2563,10 @@ function renderTranscriptTab(data) {
     <div class="transcript-block">${escapeHtml(data.full_text || '')}</div>
     ${segs.length ? `
     <div style="margin-top:16px;">
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:8px;">Сегменты</div>
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:8px;">${segs.some(s => s.speaker) ? 'Диалог' : 'Сегменты'}</div>
       ${segs.map(s => `<div class="segment-item">
         <span class="segment-time">${fmtTime(s.start)} → ${fmtTime(s.end)}</span>
+        ${s.speaker ? `<span class="segment-speaker ${s.speaker}">${s.speaker === 'employee' ? 'Сотрудник' : 'Клиент'}</span>` : ''}
         <span class="segment-text">${escapeHtml(s.text || '')}</span>
       </div>`).join('')}
     </div>` : ''}`;
@@ -2609,6 +2633,7 @@ function renderAnalysisTab(data) {
         <div class="analysis-label">Нарушения скрипта</div>
         <div class="tag-list">${data.script_violations.map(t => `<span class="tag violation-tag">${escapeHtml(t)}</span>`).join('')}</div>
       </div>` : ''}
+      ${renderCriteriaChecklist(data)}
     </div>`;
 
   // Animate score bar after element is in DOM
@@ -2618,6 +2643,36 @@ function renderAnalysisTab(data) {
       if (fill) fill.style.width = (score * 10) + '%';
     });
   }
+}
+
+// Чек-лист по критериям методики компании (если звонок оценён по методике)
+function renderCriteriaChecklist(data) {
+  const items = data.criteria || [];
+  const m = data.methodology;
+  const source = m
+    ? `Методика v${m.version}${m.title ? ' «' + escapeHtml(m.title) + '»' : ''}`
+    : 'Стандартный промпт (методика компании не применялась)';
+  if (!items.length) {
+    return `<div class="analysis-item full"><div class="analysis-label">Оценено по</div><div class="analysis-value" style="font-size:13px;">${source}</div></div>`;
+  }
+  const icon = { passed: '✓', failed: '✕', na: '—' };
+  const label = { passed: 'Выполнено', failed: 'Нарушено', na: 'Не применимо' };
+  const weight = { 3: 'критично', 2: 'важно', 1: 'желательно' };
+  return `
+    <div class="analysis-item full">
+      <div class="analysis-label">Критерии · ${source}</div>
+      <div class="criteria-list">
+        ${items.map(c => `
+          <div class="criterion ${c.result}">
+            <span class="criterion-icon" title="${label[c.result] || ''}">${icon[c.result] || '?'}</span>
+            <div class="criterion-body">
+              <div class="criterion-name">${escapeHtml(c.name)} <span class="criterion-weight">${weight[c.weight] || ''}</span></div>
+              ${c.quote ? `<div class="criterion-quote">«${escapeHtml(c.quote)}»</div>` : ''}
+              ${c.comment ? `<div class="criterion-comment">${escapeHtml(c.comment)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
 }
 
 function closeModal() {

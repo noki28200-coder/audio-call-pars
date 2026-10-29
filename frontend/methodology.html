@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ПНВ · Методика анализа</title>
+<style>
+  @import url('https://cdn.jsdelivr.net/npm/fontsource-inter@4.5.0/index.min.css');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F7F6F5;
+    --bg-card: #F7F6F5;
+    --border-color: #cfcfcf;
+    --text-primary: #000000;
+    --text-secondary: #6b7488;
+    --accent-blue: #3b82f6;
+    --accent-blue-hover: #2563eb;
+    --accent-green: #10b981;
+    --accent-red: #ef4444;
+    --accent-orange: #f59e0b;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary); color: var(--text-primary);
+    font-size: 14px; line-height: 1.5;
+  }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 24px; border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary); flex-wrap: wrap;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .topbar-title { font-weight: 700; font-size: 16px; }
+  .topbar-nav { display: flex; gap: 4px; }
+  .topbar-nav a {
+    padding: 6px 12px; border-radius: var(--radius-sm);
+    color: var(--text-secondary); text-decoration: none; font-size: 13px;
+  }
+  .topbar-nav a:hover { background: var(--bg-primary); color: var(--text-primary); }
+  .topbar-nav a.active { background: var(--bg-primary); color: var(--accent-blue); font-weight: 600; }
+  .topbar-right { display: flex; align-items: center; gap: 8px; }
+
+  .page { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .lead { color: var(--text-secondary); margin-bottom: 24px; max-width: 760px; }
+
+  .card {
+    border: 1px solid var(--border-color); border-radius: var(--radius-md);
+    background: var(--bg-primary); padding: 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .muted { color: var(--text-secondary); font-size: 13px; }
+
+  label.field { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 14px 0 6px; }
+  input[type=text], textarea, select {
+    width: 100%; padding: 10px 12px; font: inherit; color: var(--text-primary);
+    border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary);
+  }
+  textarea { resize: vertical; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent-blue); }
+  input[readonly], textarea[readonly], select:disabled { background: var(--bg-secondary); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 16px;
+    border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+    background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 13px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent-blue); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.primary { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+  .btn.primary:hover { background: var(--accent-blue-hover); }
+  .btn.danger { color: var(--accent-red); }
+  .btn.danger:hover { border-color: var(--accent-red); }
+  .btn.small { height: 30px; padding: 0 10px; font-size: 12px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  }
+  .badge.active { background: #d1fae5; color: #065f46; }
+  .badge.draft { background: #fef3c7; color: #92400e; }
+  .badge.archived { background: #e5e7eb; color: #374151; }
+
+  .criteria { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .criteria th { text-align: left; font-size: 12px; color: var(--text-secondary); padding: 6px 8px; border-bottom: 1px solid var(--border-color); }
+  .criteria td { padding: 8px; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+  .criteria td.num { width: 32px; color: var(--text-secondary); padding-top: 18px; }
+  .criteria td.weight { width: 150px; }
+  .criteria td.del { width: 44px; }
+  .criteria textarea { min-height: 60px; margin-top: 6px; font-size: 13px; }
+
+  .history { width: 100%; border-collapse: collapse; }
+  .history th, .history td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border-color); }
+  .history th { font-size: 12px; color: var(--text-secondary); }
+  .history tr.selected td { background: #eff6ff; }
+
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .notice { padding: 12px 14px; border-radius: var(--radius-sm); background: #eff6ff; color: #1e3a8a; margin-top: 12px; font-size: 13px; }
+  .notice.warn { background: #fef3c7; color: #92400e; }
+
+  /* Подтверждение */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none;
+    align-items: center; justify-content: center; padding: 16px; z-index: 50;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg-primary); border-radius: var(--radius-md); max-width: 460px; width: 100%; padding: 24px; }
+  .modal h3 { font-size: 17px; margin-bottom: 8px; }
+  .modal p { color: var(--text-secondary); margin-bottom: 4px; }
+  .modal .step { font-size: 12px; color: var(--accent-orange); font-weight: 600; margin-bottom: 8px; }
+
+  .toast {
+    position: fixed; right: 16px; bottom: 16px; max-width: 420px; z-index: 60;
+    padding: 12px 16px; border-radius: var(--radius-sm); color: #fff; background: #111827;
+    box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  }
+  .toast.error { background: var(--accent-red); }
+  .toast.success { background: var(--accent-green); }
+
+  @media (max-width: 700px) {
+    .criteria td.weight { width: 110px; }
+    .history .hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="topbar-title">ПНВ</span>
+    <nav class="topbar-nav">
+      <a href="admin.html">Дашборд</a>
+      <a href="analytics.html">Аналитика</a>
+      <a href="methodology.html" class="active">Методика анализа</a>
+    </nav>
+  </div>
+  <div class="topbar-right"></div>
+</header>
+
+<main class="page">
+  <h1>Методика анализа</h1>
+  <p class="lead">
+    Загрузите правила, по которым ваши сотрудники ведут разговор с клиентами.
+    ИИ составит из них инструкцию для анализа и список критериев — проверьте, поправьте и примените.
+    Новые звонки будут оцениваться по применённой методике; уже проанализированные не пересчитываются.
+  </p>
+
+  <section class="card" id="activeCard">
+    <h2>Сейчас применяется</h2>
+    <div id="activeInfo" class="muted">Загрузка…</div>
+  </section>
+
+  <section class="card">
+    <h2>Новая методика</h2>
+    <label class="field" for="sourceText">Правила компании (текст или файл)</label>
+    <textarea id="sourceText" rows="12" placeholder="Например: этапы разговора, обязательные фразы, работа с возражениями, что запрещено…"></textarea>
+    <div class="actions">
+      <label class="btn" for="sourceFile">Загрузить файл (.txt, .docx, .pdf)</label>
+      <input type="file" id="sourceFile" accept=".txt,.md,.docx,.pdf" hidden>
+      <button class="btn primary" id="generateBtn">Составить с помощью ИИ</button>
+    </div>
+    <div id="generateStatus"></div>
+  </section>
+
+  <section class="card" id="editorCard" hidden>
+    <h2>
+      <span id="editorTitle">Методика</span>
+      <span id="editorBadge" class="badge"></span>
+    </h2>
+    <div id="editorNotice"></div>
+
+    <label class="field" for="mTitle">Название</label>
+    <input type="text" id="mTitle" maxlength="200">
+
+    <label class="field" for="mPrompt">Инструкция для ИИ-аналитика</label>
+    <textarea id="mPrompt" rows="10"></textarea>
+
+    <label class="field">Критерии оценки</label>
+    <p class="muted">Вес: «критично» — нарушение снижает оценку звонка максимум до 4 из 10; «важно» и «желательно» влияют пропорционально.</p>
+    <table class="criteria">
+      <thead><tr><th>#</th><th>Критерий и как его проверить</th><th>Вес</th><th></th></tr></thead>
+      <tbody id="criteriaBody"></tbody>
+    </table>
+    <div class="actions" id="addCriterionWrap">
+      <button class="btn small" id="addCriterionBtn">+ Добавить критерий</button>
+    </div>
+
+    <details style="margin-top:16px;">
+      <summary class="muted" style="cursor:pointer;">Исходный текст правил</summary>
+      <pre id="mSource" style="white-space:pre-wrap;font:inherit;font-size:13px;margin-top:8px;color:var(--text-secondary);"></pre>
+    </details>
+
+    <div class="actions" id="editorActions"></div>
+  </section>
+
+  <section class="card">
+    <h2>История версий</h2>
+    <div id="historyWrap" class="muted">Загрузка…</div>
+  </section>
+</main>
+
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <div class="step" id="confirmStep"></div>
+    <h3 id="confirmTitle"></h3>
+    <p id="confirmText"></p>
+    <div class="actions" style="justify-content:flex-end;">
+      <button class="btn" id="confirmNo">Отмена</button>
+      <button class="btn primary" id="confirmYes">Да</button>
+    </div>
+  </div>
+</div>
+
+<script src="api-key.js"></script>
+<script>
+// ========================
+// API
+// ========================
+async function api(method, url, body) {
+  const opts = { method, headers: { 'X-API-Key': getApiKey() } };
+  if (body instanceof FormData) {
+    opts.body = body;
+  } else if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(url, opts);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* не JSON */ }
+  if (!res.ok) throw new Error((data && data.detail) || `${res.status} ${res.statusText}`);
+  return data;
+}
+
+// ========================
+// STATE
+// ========================
+let methodologies = [];
+let current = null;   // открытая в редакторе версия
+let dirty = false;    // в черновике есть несохранённые правки
+
+const STATUS_LABEL = { active: 'Применяется', draft: 'Черновик', archived: 'В архиве' };
+const WEIGHT_LABEL = { 3: 'Критично', 2: 'Важно', 1: 'Желательно' };
+
+// ========================
+// UTILITIES
+// ========================
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fmtDate(iso) {
+  return iso ? new Date(iso).toLocaleString('ru', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+}
+
+let toastTimer = null;
+function toast(message, type = '') {
+  document.querySelector('.toast')?.remove();
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = message;
+  document.body.appendChild(el);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), type === 'error' ? 8000 : 4000);
+}
+
+// confirmDialog показывает окно подтверждения; resolve(true) — нажали «Да».
+function confirmDialog({ step = '', title, text, yes = 'Да', danger = false }) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('confirmModal');
+    document.getElementById('confirmStep').textContent = step;
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmText').textContent = text;
+    const yesBtn = document.getElementById('confirmYes');
+    const noBtn = document.getElementById('confirmNo');
+    yesBtn.textContent = yes;
+    yesBtn.className = 'btn ' + (danger ? 'danger' : 'primary');
+    modal.classList.add('open');
+    const done = (answer) => {
+      modal.classList.remove('open');
+      yesBtn.onclick = noBtn.onclick = null;
+      resolve(answer);
+    };
+    yesBtn.onclick = () => done(true);
+    noBtn.onclick = () => done(false);
+  });
+}
+
+// Применение спрашивается дважды: случайно сменить методику для всех звонков слишком легко.
+async function confirmTwice(m, isRollback) {
+  const name = `v${m.version}${m.title ? ' «' + m.title + '»' : ''}`;
+  const first = await confirmDialog({
+    step: 'Подтверждение 1 из 2',
+    title: isRollback ? `Откатиться на методику ${name}?` : `Применить методику ${name}?`,
+    text: 'Все новые звонки будут оцениваться по ней. Уже проанализированные звонки не изменятся.',
+    yes: 'Продолжить',
+  });
+  if (!first) return false;
+  const active = methodologies.find(x => x.status === 'active');
+  return confirmDialog({
+    step: 'Подтверждение 2 из 2',
+    title: 'Точно применить?',
+    text: active
+      ? `Сейчас применяется v${active.version}. Она уйдёт в архив — на неё можно будет откатиться.`
+      : 'Сейчас звонки оцениваются стандартным промптом без критериев компании.',
+    yes: isRollback ? 'Да, откатиться' : 'Да, применить',
+  });
+}
+
+// ========================
+// LOAD
+// ========================
+async function load(selectId) {
+  try {
+    const res = await api('GET', '/admin/methodologies');
+    methodologies = res.methodologies || [];
+  } catch (e) {
+    document.getElementById('activeInfo').textContent = 'Не удалось загрузить: ' + e.message;
+    document.getElementById('historyWrap').textContent = 'Проверьте API-ключ в шапке страницы.';
+    return;
+  }
+  renderActive();
+  renderHistory();
+  const id = selectId ?? current?.id;
+  const m = methodologies.find(x => x.id === id);
+  if (m) openEditor(m);
+  else if (current) closeEditor();
+}
+
+function renderActive() {
+  const el = document.getElementById('activeInfo');
+  const m = methodologies.find(x => x.status === 'active');
+  if (!m) {
+    el.innerHTML = `Методика не применена — звонки оцениваются стандартным промптом без критериев компании.`;
+    return;
+  }
+  el.innerHTML = `
+    <div style="color:var(--text-primary);font-size:15px;font-weight:600;">v${m.version} · ${escapeHtml(m.title || 'Без названия')}</div>
+    <div>Применена ${fmtDate(m.activated_at)} · критериев: ${m.criteria.length}</div>
+    <div class="actions"><button class="btn small" onclick="openById(${m.id})">Открыть</button></div>`;
+}
+
+function renderHistory() {
+  const el = document.getElementById('historyWrap');
+  if (!methodologies.length) {
+    el.textContent = 'Пока ни одной версии.';
+    return;
+  }
+  el.innerHTML = `
+    <table class="history">
+      <thead><tr><th>Версия</th><th>Название</th><th>Статус</th><th class="hide-sm">Создана</th><th class="hide-sm">Применена</th><th class="hide-sm">Критериев</th><th></th></tr></thead>
+      <tbody>${methodologies.map(m => `
+        <tr class="${current && current.id === m.id ? 'selected' : ''}">
+          <td>v${m.version}</td>
+          <td>${escapeHtml(m.title || 'Без названия')}</td>
+          <td><span class="badge ${m.status}">${STATUS_LABEL[m.status]}</span></td>
+          <td class="hide-sm">${fmtDate(m.created_at)}</td>
+          <td class="hide-sm">${fmtDate(m.activated_at)}</td>
+          <td class="hide-sm">${m.criteria.length}</td>
+          <td><button class="btn small" onclick="openById(${m.id})">Открыть</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+// ========================
+// EDITOR
+// ========================
+function openById(id) {
+  const m = methodologies.find(x => x.id === id);
+  if (m) {
+    openEditor(m);
+    document.getElementById('editorCard').scrollIntoView({ behavior: 'smooth' });
+  }
+}
+
+function openEditor(m) {
+  current = JSON.parse(JSON.stringify(m));
+  dirty = false;
+  const editable = m.status === 'draft';
+
+  document.getElementById('editorCard').hidden = false;
+  document.getElementById('editorTitle').textContent = `Методика v${m.version}`;
+  const badge = document.getElementById('editorBadge');
+  badge.className = 'badge ' + m.status;
+  badge.textContent = STATUS_LABEL[m.status];
+
+  const notice = {
+    draft: '<div class="notice">Черновик: проверьте инструкцию и критерии, поправьте при необходимости и нажмите «Применить».</div>',
+    active: '<div class="notice">Эта версия применяется сейчас. Чтобы изменить её, создайте копию — правки войдут в силу после применения копии.</div>',
+    archived: '<div class="notice warn">Архивная версия. На неё можно откатиться.</div>',
+  }[m.status];
+  document.getElementById('editorNotice').innerHTML = notice;
+
+  const title = document.getElementById('mTitle');
+  const prompt = document.getElementById('mPrompt');
+  title.value = m.title;
+  prompt.value = m.prompt;
+  title.readOnly = prompt.readOnly = !editable;
+  document.getElementById('mSource').textContent = m.source_text || '—';
+  document.getElementById('addCriterionWrap').hidden = !editable;
+
+  renderCriteria();
+  renderEditorActions();
+  renderHistory();
+}
+
+function closeEditor() {
+  current = null;
+  dirty = false;
+  document.getElementById('editorCard').hidden = true;
+  renderHistory();
+}
+
+function renderCriteria() {
+  const editable = current.status === 'draft';
+  const ro = editable ? '' : 'readonly';
+  document.getElementById('criteriaBody').innerHTML = current.criteria.map((c, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td>
+        <input type="text" value="${escapeHtml(c.name)}" ${ro} placeholder="Например: Назвал своё имя и компанию"
+               oninput="editCriterion(${i}, 'name', this.value)">
+        <textarea ${ro} placeholder="Как понять, что выполнено"
+                  oninput="editCriterion(${i}, 'description', this.value)">${escapeHtml(c.description)}</textarea>
+      </td>
+      <td class="weight">
+        <select ${editable ? '' : 'disabled'} onchange="editCriterion(${i}, 'weight', +this.value)">
+          ${[3, 2, 1].map(w => `<option value="${w}" ${c.weight === w ? 'selected' : ''}>${WEIGHT_LABEL[w]}</option>`).join('')}
+        </select>
+      </td>
+      <td class="del">${editable ? `<button class="btn small danger" title="Удалить критерий" onclick="removeCriterion(${i})">✕</button>` : ''}</td>
+    </tr>`).join('');
+}
+
+function editCriterion(i, field, value) {
+  current.criteria[i][field] = value;
+  dirty = true;
+}
+
+function removeCriterion(i) {
+  current.criteria.splice(i, 1);
+  dirty = true;
+  renderCriteria();
+}
+
+document.getElementById('addCriterionBtn').onclick = () => {
+  current.criteria.push({ name: '', description: '', weight: 2 });
+  dirty = true;
+  renderCriteria();
+  const inputs = document.querySelectorAll('#criteriaBody input[type=text]');
+  inputs[inputs.length - 1]?.focus();
+};
+
+['mTitle', 'mPrompt'].forEach(id => document.getElementById(id).addEventListener('input', () => { dirty = true; }));
+
+function renderEditorActions() {
+  const el = document.getElementById('editorActions');
+  const s = current.status;
+  el.innerHTML = [
+    s === 'draft' && '<button class="btn primary" onclick="applyCurrent()">Применить</button>',
+    s === 'draft' && '<button class="btn" onclick="saveDraft()">Сохранить черновик</button>',
+    s === 'archived' && '<button class="btn primary" onclick="applyCurrent()">Откатиться на эту версию</button>',
+    s !== 'draft' && '<button class="btn" onclick="copyToDraft()">Создать копию для правки</button>',
+    s === 'draft' && '<button class="btn danger" onclick="deleteDraft()">Удалить черновик</button>',
+    '<button class="btn" onclick="closeEditor()">Закрыть</button>',
+  ].filter(Boolean).join('');
+}
+
+function editorPayload() {
+  return {
+    title: document.getElementById('mTitle').value,
+    prompt: document.getElementById('mPrompt').value,
+    criteria: current.criteria,
+  };
+}
+
+async function saveDraft(silent) {
+  try {
+    const saved = await api('PUT', `/admin/methodologies/${current.id}`, editorPayload());
+    dirty = false;
+    if (!silent) toast('Черновик сохранён', 'success');
+    await load(saved.id);
+    return true;
+  } catch (e) {
+    toast('Не сохранено: ' + e.message, 'error');
+    return false;
+  }
+}
+
+async function applyCurrent() {
+  const m = current;
+  const isRollback = m.status === 'archived';
+  if (!(await confirmTwice(m, isRollback))) return;
+  if (m.status === 'draft' && dirty && !(await saveDraft(true))) return;
+  try {
+    await api('POST', `/admin/methodologies/${m.id}/activate`);
+    toast(isRollback ? `Откат выполнен: применяется v${m.version}` : `Методика v${m.version} применена`, 'success');
+    await load(m.id);
+  } catch (e) {
+    toast('Не применено: ' + e.message, 'error');
+  }
+}
+
+async function copyToDraft() {
+  try {
+    const copy = await api('POST', '/admin/methodologies', {
+      title: current.title, source_text: current.source_text, prompt: current.prompt, criteria: current.criteria,
+    });
+    toast(`Создан черновик v${copy.version}`, 'success');
+    await load(copy.id);
+  } catch (e) {
+    toast('Не удалось создать копию: ' + e.message, 'error');
+  }
+}
+
+async function deleteDraft() {
+  const ok = await confirmDialog({
+    title: `Удалить черновик v${current.version}?`, text: 'Это действие нельзя отменить.', yes: 'Удалить', danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api('DELETE', `/admin/methodologies/${current.id}`);
+    toast('Черновик удалён');
+    current = null;
+    await load();
+  } catch (e) {
+    toast('Не удалено: ' + e.message, 'error');
+  }
+}
+
+// ========================
+// NEW METHODOLOGY
+// ========================
+document.getElementById('sourceFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const textarea = document.getElementById('sourceText');
+  if (textarea.value.trim() && !(await confirmDialog({
+    title: 'Заменить текст?', text: `Текст в поле будет заменён содержимым файла «${file.name}».`, yes: 'Заменить',
+  }))) return;
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    toast('Читаю файл…');
+    const res = await api('POST', '/admin/methodologies/extract-text', form);
+    textarea.value = res.text;
+    toast(`Текст из «${file.name}» вставлен — проверьте его перед генерацией`, 'success');
+  } catch (err) {
+    toast('Файл не прочитан: ' + err.message, 'error');
+  }
+});
+
+document.getElementById('generateBtn').addEventListener('click', async () => {
+  const text = document.getElementById('sourceText').value.trim();
+  if (!text) {
+    toast('Вставьте текст правил или загрузите файл', 'error');
+    return;
+  }
+  const btn = document.getElementById('generateBtn');
+  const status = document.getElementById('generateStatus');
+  btn.disabled = true;
+  const started = Date.now();
+  const tick = () => {
+    const sec = Math.round((Date.now() - started) / 1000);
+    status.innerHTML = `<div class="notice"><span class="spinner"></span> ИИ составляет инструкцию и критерии… ${sec} с. Обычно это занимает 3–6 минут, не закрывайте страницу.</div>`;
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const draft = await api('POST', '/admin/methodologies/generate', { source_text: text });
+    status.innerHTML = '';
+    toast(`Готово: черновик v${draft.version}, критериев: ${draft.criteria.length}`, 'success');
+    await load(draft.id);
+    document.getElementById('editorCard').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    status.innerHTML = `<div class="notice warn">Не получилось: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    clearInterval(timer);
+    btn.disabled = false;
+  }
+});
+
+window.addEventListener('beforeunload', (e) => {
+  if (dirty && current?.status === 'draft') e.preventDefault();
+});
+
+load();
+</script>
+</body>
+</html>

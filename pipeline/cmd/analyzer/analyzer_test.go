@@ -129,7 +129,9 @@ func TestAnalyzeWithMethodology(t *testing.T) {
 }
 
 func TestAssignRoles(t *testing.T) {
-	model, _ := fakeModel(t, map[string]any{"speakers": []string{"employee", "client", "client"}})
+	model, _ := fakeModel(t, map[string]any{"speakers": []map[string]any{
+		{"n": 1, "speaker": "employee"}, {"n": 3, "speaker": "client"}, {"n": 2, "speaker": "client"},
+	}})
 	turns, err := assignRoles(context.Background(), model,
 		[]segment{{Start: 0, End: 4, Text: "Как вас зовут? Сергей. Звоню насчёт доставки."}}, "inbound")
 	if err != nil {
@@ -139,9 +141,15 @@ func TestAssignRoles(t *testing.T) {
 		t.Fatalf("got %+v", turns)
 	}
 
-	// Число ролей не совпало с числом предложений — ошибка, а не сдвинутая разметка
-	model, _ = fakeModel(t, map[string]any{"speakers": []string{"employee"}})
-	if _, err := assignRoles(context.Background(), model, []segment{{Text: "Раз. Два."}}, ""); err == nil {
-		t.Fatal("ожидалась ошибка")
+	// Ошибки разметки — ошибка, а не сдвинутые роли
+	for name, speakers := range map[string][]map[string]any{
+		"не все предложения": {{"n": 1, "speaker": "employee"}},
+		"повтор номера":      {{"n": 1, "speaker": "employee"}, {"n": 1, "speaker": "client"}},
+		"номер вне списка":   {{"n": 1, "speaker": "employee"}, {"n": 5, "speaker": "client"}},
+	} {
+		model, _ = fakeModel(t, map[string]any{"speakers": speakers})
+		if _, err := assignRoles(context.Background(), model, []segment{{Text: "Раз. Два."}}, ""); err == nil {
+			t.Errorf("%s: ожидалась ошибка", name)
+		}
 	}
 }

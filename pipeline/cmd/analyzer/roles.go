@@ -82,10 +82,19 @@ func mergeTurns(sents []segment) []segment {
 
 const rolesSystem = `Ты получаешь расшифровку телефонного разговора сотрудника компании с клиентом,
 разбитую на пронумерованные предложения. Определи, кто произносит каждое предложение:
-"employee" — сотрудник компании (представляется от её имени, задаёт вопросы о потребностях,
-рассказывает о продукте, предлагает), "client" — клиент.
-Реплики обычно чередуются, но несколько предложений подряд может сказать один человек.
-Ответ — массив ролей строго по порядку, по одной на каждое предложение.`
+"employee" — сотрудник компании, "client" — клиент.
+
+Как отличить:
+- Сотрудник: открывает разговор (приветствие, название компании, своё имя), задаёт вопросы
+  о ситуации и потребностях клиента, рассказывает о продукте, называет цены, предлагает
+  варианты и время («вам удобнее в четверг или в пятницу?»), подводит итог, благодарит за время.
+- Клиент: отвечает на вопросы о себе и своей компании, называет своё имя, описывает проблемы,
+  возражает («дорого», «подумаю»), выбирает из предложенных вариантов («давайте в четверг»).
+- Вопрос и ответ на него почти всегда произносят разные люди.
+- Реплики обычно чередуются, но несколько предложений подряд может сказать один человек.
+
+Ответ — массив по одному элементу на каждое предложение, строго по порядку:
+n — номер предложения из квадратных скобок, speaker — кто его произносит.`
 
 // assignRoles размечает, где говорит сотрудник, а где клиент, и возвращает
 // реплики. При ошибке звонок анализируется без ролей.
@@ -106,19 +115,30 @@ func assignRoles(ctx context.Context, model *llm.Client, segs []segment, directi
 		fmt.Fprintf(&b, "[%d] %s\n", i+1, s.Text)
 	}
 
+	// Номер рядом с ролью: без него модель на длинном списке сбивается
+	// и приписывает роль соседнему предложению
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"speakers": map[string]any{
-				"type":     "array",
-				"items":    map[string]any{"type": "string", "enum": []string{SpeakerEmployee, SpeakerClient}},
-				"minItems": len(sents), "maxItems": len(sents),
+				"type": "array", "minItems": len(sents), "maxItems": len(sents),
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"n":       map[string]any{"type": "integer"},
+						"speaker": map[string]any{"type": "string", "enum": []string{SpeakerEmployee, SpeakerClient}},
+					},
+					"required": []string{"n", "speaker"},
+				},
 			},
 		},
 		"required": []string{"speakers"},
 	}
 	var out struct {
-		Speakers []string `json:"speakers"`
+		Speakers []struct {
+			N       int    `json:"n"`
+			Speaker string `json:"speaker"`
+		} `json:"speakers"`
 	}
 	if err := model.GenerateJSON(ctx, rolesSystem, b.String(), schema, 0, &out); err != nil {
 		return nil, err
@@ -126,11 +146,14 @@ func assignRoles(ctx context.Context, model *llm.Client, segs []segment, directi
 	if len(out.Speakers) != len(sents) {
 		return nil, fmt.Errorf("модель вернула %d ролей на %d предложений", len(out.Speakers), len(sents))
 	}
-	for i := range sents {
-		if _, ok := speakerLabels[out.Speakers[i]]; !ok {
-			return nil, fmt.Errorf("неизвестная роль %q", out.Speakers[i])
+	for _, sp := range out.Speakers {
+		if sp.N < 1 || sp.N > len(sents) || sents[sp.N-1].Speaker != "" {
+			return nil, fmt.Errorf("неверный или повторный номер предложения %d", sp.N)
 		}
-		sents[i].Speaker = out.Speakers[i]
+		if _, ok := speakerLabels[sp.Speaker]; !ok {
+			return nil, fmt.Errorf("неизвестная роль %q", sp.Speaker)
+		}
+		sents[sp.N-1].Speaker = sp.Speaker
 	}
 	return mergeTurns(sents), nil
 }
