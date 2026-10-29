@@ -1,139 +1,141 @@
-# Call Parser – automatische Gesprächsanalyse
+# Call Parser – automatic call analysis
 
-Das System verarbeitet Aufzeichnungen von Telefonaten automatisch:
+**English** | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
-1. **Abholen** – neue Aufnahmen aus MangoOffice oder per Upload
-2. **Speichern** – Audiodateien im S3-Speicher (SeaweedFS)
-3. **Transkribieren** – Sprache zu Text mit Whisper
-4. **Analysieren** – lokales Sprachmodell (Ollama, `qwen3.5:9b`): Zusammenfassung, Bewertung 1–10, Stimmung, Regelverstöße, nächste Schritte
-5. **Bereitstellen** – Ergebnisse über REST-API, Admin-Oberfläche und optionalen CRM-Webhook
+The system processes phone call recordings automatically:
 
-Alle Daten bleiben auf dem eigenen Server – es werden keine externen KI-Dienste genutzt.
+1. **Collect** – new recordings from MangoOffice or via upload
+2. **Store** – audio files in S3 storage (SeaweedFS)
+3. **Transcribe** – speech to text with Whisper
+4. **Analyze** – local language model (Ollama, `qwen3.5:9b`): summary, score 1–10, sentiment, rule violations, next steps
+5. **Deliver** – results via REST API, admin panel and an optional CRM webhook
 
-## Architektur
+All data stays on your own server – no external AI services are used.
+
+## Architecture
 
 ```
 MangoOffice ──► collector ─┐
                            ├─► S3 + PostgreSQL ──► Kafka ──► transcriber ──► Whisper
 Upload (API) ──────────────┘                                     │
                                                                  ▼
-                                    CRM-Webhook ◄── analyzer ──► Ollama (qwen3.5:9b)
+                                    CRM webhook ◄── analyzer ──► Ollama (qwen3.5:9b)
 
 Browser / CRM ──► nginx :8080 ──► api (Go) ──► PostgreSQL, S3
 ```
 
-- Alle Dienste außer Whisper sind in **Go** geschrieben (`pipeline/`).
-- Kafka-Events enthalten nur die `call_id`; die Daten liegen in PostgreSQL. Ein verlorenes oder doppeltes Event schadet daher nicht.
-- Fehlgeschlagene Schritte werden automatisch wiederholt (Standard: 3 Versuche, 5 Minuten Pause). Hängende Anrufe werden erkannt und neu eingereiht.
+- All services except Whisper are written in **Go** (`pipeline/`).
+- Kafka events carry only the `call_id`; the data lives in PostgreSQL, so a lost or duplicated event does no harm.
+- Failed steps are retried automatically (default: 3 attempts, 5-minute pause). Stuck calls are detected and re-queued.
 
-## Schnellstart
+## Quick start
 
-**Voraussetzungen:** Docker mit Compose v2, 16 GB RAM, ca. 20 GB freier Speicher, [Ollama](https://ollama.com) auf dem Host.
+**Requirements:** Docker with Compose v2, 16 GB RAM, ~20 GB free disk, [Ollama](https://ollama.com) on the host.
 
 ```bash
 git clone https://github.com/noki28200-coder/audio-call-pars.git
 cd audio-call-pars
 
-ollama pull qwen3.5:9b        # KI-Modell, ca. 6,6 GB
-cp .env.example .env          # Passwörter und Schlüssel eintragen
-docker compose up -d          # erster Start: 10–40 Min. (Images + Whisper-Modell)
-docker compose ps             # alle Dienste sollten "healthy" sein
+ollama pull qwen3.5:9b        # AI model, ~6.6 GB
+cp .env.example .env          # set passwords and keys
+docker compose up -d          # first start: 10–40 min (images + Whisper model)
+docker compose ps             # all services should be "healthy"
 ```
 
-| Adresse | Inhalt |
+| URL | What |
 |---|---|
-| http://localhost:8080/admin.html | Admin-Oberfläche (API-Schlüssel oben eingeben) |
-| http://localhost:8080/analytics.html | Auswertungen |
-| http://localhost:8080/docs | Interaktive API-Dokumentation (Swagger) |
-| http://localhost:8888/buckets/call-audios/ | Dateiansicht des S3-Speichers |
+| http://localhost:8080/admin.html | Admin panel (enter the API key at the top) |
+| http://localhost:8080/analytics.html | Analytics |
+| http://localhost:8080/docs | Interactive API docs (Swagger) |
+| http://localhost:8888/buckets/call-audios/ | S3 file browser |
 
-Ohne Ollama auf dem Host: `docker compose --profile docker-ollama up -d` und in `.env` `OLLAMA_HOST=http://ollama:11434` setzen (läuft dann nur auf der CPU).
+Without Ollama on the host: `docker compose --profile docker-ollama up -d` and set `OLLAMA_HOST=http://ollama:11434` in `.env` (CPU only).
 
-## Konfiguration (`.env`)
+## Configuration (`.env`)
 
-| Variable | Bedeutung | Standard |
+| Variable | Meaning | Default |
 |---|---|---|
-| `API_KEY` | Schlüssel für API und Oberfläche; leer = keine Authentifizierung (nur Entwicklung) | `dev-insecure-key` |
-| `POSTGRES_PASSWORD` | Datenbank-Passwort | – |
-| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Zugangsdaten für den S3-Speicher | – |
-| `MANGO_API_KEY`, `MANGO_API_SALT` | Zugang zu MangoOffice (nur für automatischen Import) | – |
-| `POLL_INTERVAL_SECONDS` | Abfrageintervall MangoOffice | `300` |
-| `WHISPER_MODEL` | `tiny` … `large-v3`, größer = genauer, aber langsamer | `medium` |
-| `WHISPER_LANGUAGE` | Sprache der Gespräche | `ru` |
-| `OLLAMA_HOST` | Adresse von Ollama | `http://host.docker.internal:11434` |
-| `OLLAMA_MODEL` | KI-Modell; schwächere Rechner: `qwen3.5:4b` | `qwen3.5:9b` |
-| `MAX_RETRIES` | Wiederholungen pro Verarbeitungsschritt | `3` |
-| `CRM_WEBHOOK_URL` | Analyseergebnisse zusätzlich an diese URL senden | leer |
+| `API_KEY` | Key for the API and admin panel; empty = no auth (development only) | `dev-insecure-key` |
+| `POSTGRES_PASSWORD` | Database password | – |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | S3 storage credentials | – |
+| `MANGO_API_KEY`, `MANGO_API_SALT` | MangoOffice access (only for automatic import) | – |
+| `POLL_INTERVAL_SECONDS` | MangoOffice polling interval | `300` |
+| `WHISPER_MODEL` | `tiny` … `large-v3`; larger = more accurate but slower | `medium` |
+| `WHISPER_LANGUAGE` | Language of the calls | `ru` |
+| `OLLAMA_HOST` | Ollama address | `http://host.docker.internal:11434` |
+| `OLLAMA_MODEL` | AI model; weaker machines: `qwen3.5:4b` | `qwen3.5:9b` |
+| `MAX_RETRIES` | Retries per processing step | `3` |
+| `CRM_WEBHOOK_URL` | Also send analysis results to this URL | empty |
 
-Einen sicheren Schlüssel erzeugen: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+Generate a secure key: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
 
-## API in Kürze
+## API at a glance
 
-Authentifizierung über den Header `X-API-Key` (für Audio-Links auch `?api_key=`). Vollständige Beschreibung unter `/docs`, Hinweise für das Frontend in [FRONTEND_INTEGRATION.md](FRONTEND_INTEGRATION.md).
+Authentication via the `X-API-Key` header (or `?api_key=` for audio links). Full reference at `/docs`, frontend notes in [FRONTEND_INTEGRATION.md](FRONTEND_INTEGRATION.md) (Russian).
 
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/calls/upload` | Audiodatei hochladen (bis 200 MB) |
-| `GET` | `/calls` | Liste mit Filtern und Volltextsuche |
-| `GET` | `/calls/{id}` | Alle Daten eines Anrufs |
-| `GET` | `/calls/{id}/status` | Nur den Status (für Polling) |
-| `GET` | `/calls/{id}/audio` | Aufnahme abspielen (mit Spulen) |
-| `GET` | `/calls/{id}/transcript` | Transkript mit Zeitstempeln |
-| `GET` | `/calls/{id}/analysis` | KI-Analyse |
-| `GET` | `/admin/stats`, `/admin/logs` | Statistik und Protokoll |
+| `POST` | `/calls/upload` | Upload an audio file (up to 200 MB) |
+| `GET` | `/calls` | List with filters and full-text search |
+| `GET` | `/calls/{id}` | All data of a call |
+| `GET` | `/calls/{id}/status` | Status only (for polling) |
+| `GET` | `/calls/{id}/audio` | Play the recording (seeking supported) |
+| `GET` | `/calls/{id}/transcript` | Transcript with timestamps |
+| `GET` | `/calls/{id}/analysis` | AI analysis |
+| `GET` | `/admin/stats`, `/admin/logs` | Statistics and log |
 
 ```bash
-curl -H "X-API-Key: $API_KEY" -F file=@anruf.mp3 http://localhost:8080/calls/upload
+curl -H "X-API-Key: $API_KEY" -F file=@call.mp3 http://localhost:8080/calls/upload
 ```
 
-**Status eines Anrufs:** `pending` → `stored` → `transcribing` → `transcribed` → `analyzing` → `analyzed` (bei Fehlern `failed_download` / `failed_transcription` / `failed_analysis`).
+**Call status:** `pending` → `stored` → `transcribing` → `transcribed` → `analyzing` → `analyzed` (on errors `failed_download` / `failed_transcription` / `failed_analysis`).
 
-## Betrieb
+## Operations
 
 ```bash
-docker compose logs -f analyzer                 # Logs eines Dienstes
-docker compose up -d --build api                # nach Codeänderungen neu bauen
-docker compose exec postgres psql -U callsuser -d callsdb   # Datenbank
+docker compose logs -f analyzer                 # logs of one service
+docker compose up -d --build api                # rebuild after code changes
+docker compose exec postgres psql -U callsuser -d callsdb   # database shell
 
 # Backup
 docker compose exec postgres pg_dump -U callsuser callsdb > backup.sql
 docker run --rm -v audio-call-parser-go_s3_data:/data -v "$PWD":/b alpine tar czf /b/s3.tar.gz /data
 ```
 
-**Typische Probleme**
+**Common issues**
 
-- *Transkription zu langsam oder Speicher voll* → kleineres `WHISPER_MODEL` (z. B. `small`) oder Docker mehr CPU/RAM geben.
-- *Analyse schlägt fehl* → `ollama list` prüfen, Modell mit `ollama pull qwen3.5:9b` laden.
-- *403 Forbidden* → `X-API-Key` stimmt nicht mit `API_KEY` in `.env` überein.
+- *Transcription too slow or out of memory* → smaller `WHISPER_MODEL` (e.g. `small`) or give Docker more CPU/RAM.
+- *Analysis fails* → check `ollama list`, pull the model with `ollama pull qwen3.5:9b`.
+- *403 Forbidden* → `X-API-Key` does not match `API_KEY` in `.env`.
 
-## Projektstruktur
+## Project structure
 
 ```
-db/init.sql            Datenbankschema (wird bei jedem Start idempotent angewendet)
-docker-compose.yml     alle Dienste
-frontend/              statische Seiten (Admin, Analytics)
-nginx/                 Reverse Proxy
-whisperx-service/      Spracherkennung (Python, faster-whisper)
-examples/              Beispiel einer Gesprächsmethodik für die KI-Bewertung
-pipeline/              Go-Modul
-  cmd/api              REST-API
-  cmd/collector        Import aus MangoOffice
-  cmd/transcriber      Transkription
-  cmd/analyzer         KI-Analyse
-  internal/            gemeinsame Pakete (Konfiguration, S3, Kafka, Datenbank, Worker)
+db/init.sql            database schema (applied idempotently on every start)
+docker-compose.yml     all services
+frontend/              static pages (admin, analytics)
+nginx/                 reverse proxy
+whisperx-service/      speech recognition (Python, faster-whisper)
+examples/              sample conversation methodology for AI scoring
+pipeline/              Go module
+  cmd/api              REST API
+  cmd/collector        MangoOffice import
+  cmd/transcriber      transcription
+  cmd/analyzer         AI analysis
+  internal/            shared packages (config, S3, Kafka, database, worker)
 ```
 
-## Entwicklung
+## Development
 
 ```bash
 cd pipeline && go test ./...
 
-# Integrationstests mit temporärer Datenbank (wird geleert!)
+# Integration tests with a temporary database (it will be wiped!)
 docker run --rm -d --name pg-test -p 55432:5432 -e POSTGRES_PASSWORD=test postgres:16-alpine
 TEST_POSTGRES_DSN=postgres://postgres:test@localhost:55432/postgres go test -p 1 ./...
 docker stop pg-test
 ```
 
-## Lizenz
+## License
 
-Alle Rechte vorbehalten – siehe [LICENSE](LICENSE).
+All rights reserved – see [LICENSE](LICENSE).
