@@ -124,9 +124,12 @@ services:
   # СЕРВИСЫ ПРИЛОЖЕНИЯ
   # ════════════════════════════════════════════════════════════
 
-  # ── Главный API: REST для CRM + ручная загрузка ─────────────
+  # ── Главный API: REST для CRM + ручная загрузка (Go, pipeline/cmd/api)
   api:
-    build: ./api
+    build:
+      context: ./pipeline
+      args:
+        SERVICE: api
     restart: unless-stopped
     depends_on:
       db-migrate:
@@ -144,7 +147,7 @@ services:
       S3_BUCKET:        ${S3_BUCKET:-call-audios}
       API_KEY:          ${API_KEY:-dev-insecure-key}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8000/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

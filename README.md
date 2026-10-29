@@ -48,7 +48,7 @@ mango-collector  (Go)
                ▲
                │  все данные хранятся в PostgreSQL
                │
-  nginx :80 ──► api  (FastAPI)
+  nginx :8080 ──► api  (Go)
                  REST API для CRM и фронтенда
 ```
 
@@ -913,11 +913,6 @@ calls/
 ├── nginx/
 │   └── nginx.conf            # Конфиг nginx (с местом для фронтенда)
 │
-├── api/                      # Главный REST API
-│   ├── Dockerfile
-│   ├── main.py
-│   └── requirements.txt
-│
 ├── frontend/                 # Статические страницы (раздаёт nginx)
 │   ├── admin.html
 │   ├── analytics.html
@@ -928,6 +923,7 @@ calls/
 └── pipeline/                 # Go-модуль: все сервисы конвейера
     ├── Dockerfile            # Один образ, сервис выбирается через ARG SERVICE
     ├── cmd/
+    │   ├── api/              # Главный REST API (сайт, CRM, загрузка)
     │   ├── collector/        # Сборщик записей из МангоОфис
     │   ├── transcriber/      # Транскрибация через whisperx-service
     │   └── analyzer/         # Анализ через Ollama
@@ -949,31 +945,20 @@ calls/
 cd pipeline
 go test ./...
 
-# Интеграционные тесты запросов к БД (нужен временный PostgreSQL, БД будет очищена)
+# Интеграционные тесты БД и API (нужен временный PostgreSQL, БД будет очищена)
 docker run --rm -d --name pg-test -p 55432:5432 -e POSTGRES_PASSWORD=test postgres:16-alpine
-TEST_POSTGRES_DSN=postgres://postgres:test@localhost:55432/postgres go test ./internal/store/
+TEST_POSTGRES_DSN=postgres://postgres:test@localhost:55432/postgres go test -p 1 ./...
 docker stop pg-test
 ```
 
-### Локальная разработка (без Docker)
+### Изменения в коде сервисов
+
+Postgres и Kafka доступны только внутри сети Docker, поэтому после правок
+сервис проще пересобрать и перезапустить в контейнере:
 
 ```bash
-# Создать виртуальное окружение
-python3 -m venv venv
-source venv/bin/activate
-
-# Установить зависимости нужного сервиса
-pip install -r api/requirements.txt
-
-# Запустить только инфраструктуру
-docker compose up -d postgres kafka s3 ollama
-
-# Запустить API локально
-POSTGRES_DSN="postgresql://callsuser:callspassword@localhost:5432/callsdb" \
-KAFKA_BOOTSTRAP="localhost:9092" \
-S3_ENDPOINT="http://localhost:9000" S3_ACCESS_KEY=s3admin S3_SECRET_KEY=s3admin-secret \
-API_KEY="dev-key" \
-uvicorn api.main:app --reload --port 8000
+docker compose up -d --build api            # или transcriber / analyzer / mango-collector
+docker compose logs -f api
 ```
 
 ### Переменные окружения для dev-режима
