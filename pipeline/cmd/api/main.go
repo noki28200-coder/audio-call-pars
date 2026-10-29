@@ -48,9 +48,11 @@ func (s *server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "api"})
 	})
 
+	mux.HandleFunc("POST /calls/upload", auth(s.uploadCall))
 	mux.HandleFunc("GET /calls", auth(s.listCalls))
 	mux.HandleFunc("GET /calls/{call_id}", auth(s.getCall))
 	mux.HandleFunc("GET /calls/{call_id}/status", auth(s.getStatus))
+	mux.HandleFunc("GET /calls/{call_id}/audio", auth(s.getAudio))
 	mux.HandleFunc("GET /calls/{call_id}/transcript", auth(s.getTranscript))
 	mux.HandleFunc("GET /calls/{call_id}/analysis", auth(s.getAnalysis))
 

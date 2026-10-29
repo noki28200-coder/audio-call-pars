@@ -33,6 +33,31 @@ func TestSnippet(t *testing.T) {
 	}
 }
 
+func TestParseRange(t *testing.T) {
+	cases := []struct {
+		header             string
+		start, end         int64
+		partial, wantError bool
+	}{
+		{"bytes=4-8", 4, 8, true, false},
+		{"bytes=4-", 4, 19, true, false},
+		{"bytes=10-999", 10, 19, true, false}, // конец обрезается по размеру
+		{"bytes=-4", 16, 19, true, false},     // последние 4 байта
+		{"bytes=-100", 0, 19, true, false},
+		{"bytes=500-", 0, 0, false, true}, // за пределами файла → 416
+		{"bytes=8-4", 0, 0, false, true},
+		{"bytes=0-1,5-6", 0, 0, false, false}, // несколько диапазонов не поддерживаем — весь файл
+		{"items=0-1", 0, 0, false, false},
+		{"", 0, 0, false, false},
+	}
+	for _, c := range cases {
+		start, end, partial, err := parseRange(c.header, 20)
+		if (err != nil) != c.wantError || partial != c.partial || (partial && (start != c.start || end != c.end)) {
+			t.Errorf("%q: got %d-%d partial=%v err=%v", c.header, start, end, partial, err)
+		}
+	}
+}
+
 func TestRequireAuth(t *testing.T) {
 	h := requireAuth("secret", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	cases := []struct {
