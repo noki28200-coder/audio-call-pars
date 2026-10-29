@@ -200,7 +200,7 @@ services:
     environment:
       WHISPER_MODEL:    ${WHISPER_MODEL:-medium}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
-      WHISPER_THREADS:  ${WHISPER_THREADS:-4}
+      WHISPER_THREADS:  ${WHISPER_THREADS:-0}   # 0 = все ядра контейнера
     volumes:
       # Кэш моделей HuggingFace: модель скачивается один раз, а оборванная
       # загрузка продолжается после перезапуска, а не начинается заново

@@ -31,7 +31,8 @@ logging.basicConfig(
 logger = logging.getLogger("whisperx")
 
 WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "medium")
-WHISPER_THREADS = int(os.getenv("WHISPER_THREADS", "4"))
+# 0 — по числу ядер, доступных контейнеру
+WHISPER_THREADS = int(os.getenv("WHISPER_THREADS", "0")) or os.cpu_count() or 4
 DEFAULT_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "ru")
 
 _model: WhisperModel = None
@@ -92,7 +93,7 @@ def _transcribe(audio: np.ndarray, language: str) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _model
-    logger.info("Загружаю Whisper модель '%s'...", WHISPER_MODEL_NAME)
+    logger.info("Загружаю Whisper модель '%s' (%d потоков)...", WHISPER_MODEL_NAME, WHISPER_THREADS)
     _model = WhisperModel(
         WHISPER_MODEL_NAME,
         device="cpu",
