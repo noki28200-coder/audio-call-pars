@@ -58,6 +58,25 @@ func TestParseRange(t *testing.T) {
 	}
 }
 
+func TestOpenAPISpecCoversRoutes(t *testing.T) {
+	var spec struct {
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(openapiSpec, &spec); err != nil {
+		t.Fatal("openapi.json невалидный:", err)
+	}
+	for _, route := range []string{
+		"post /calls/upload", "get /calls", "get /calls/{call_id}", "get /calls/{call_id}/status",
+		"get /calls/{call_id}/audio", "get /calls/{call_id}/transcript", "get /calls/{call_id}/analysis",
+		"get /admin/stats", "get /admin/logs", "get /health",
+	} {
+		method, path, _ := strings.Cut(route, " ")
+		if spec.Paths[path][method] == nil {
+			t.Errorf("в openapi.json нет %s", route)
+		}
+	}
+}
+
 func TestRequireAuth(t *testing.T) {
 	h := requireAuth("secret", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	cases := []struct {

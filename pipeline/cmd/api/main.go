@@ -47,6 +47,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "api"})
 	})
+	mux.HandleFunc("GET /openapi.json", serveOpenAPI)
+	mux.HandleFunc("GET /docs", serveDocs)
 
 	mux.HandleFunc("POST /calls/upload", auth(s.uploadCall))
 	mux.HandleFunc("GET /calls", auth(s.listCalls))

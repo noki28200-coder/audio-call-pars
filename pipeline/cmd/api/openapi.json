@@ -1,0 +1,151 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Call Records API",
+    "description": "API для доступа к записям звонков, транскрипциям и аналитике. Авторизация: заголовок X-API-Key (или параметр api_key для ссылок на аудио).",
+    "version": "2.0.0"
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    },
+    "parameters": {
+      "CallId": {
+        "name": "call_id", "in": "path", "required": true,
+        "description": "Внутренний ID звонка или ID записи МангоОфис",
+        "schema": {"type": "string"}
+      },
+      "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1}},
+      "Offset": {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
+    },
+    "schemas": {
+      "Error": {"type": "object", "properties": {"detail": {"type": "string"}}},
+      "Status": {
+        "type": "string",
+        "enum": ["pending", "stored", "transcribing", "transcribed", "analyzing", "analyzed",
+                 "failed_download", "failed_transcription", "failed_analysis"]
+      }
+    },
+    "responses": {
+      "Forbidden": {"description": "Неверный API ключ", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "NotFound": {"description": "Не найдено", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+    }
+  },
+  "security": [{"ApiKey": []}],
+  "tags": [{"name": "Calls"}, {"name": "Admin"}, {"name": "System"}],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"], "summary": "Health check (без авторизации)", "security": [],
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "/calls/upload": {
+      "post": {
+        "tags": ["Calls"], "summary": "Загрузить аудиофайл вручную",
+        "requestBody": {
+          "required": true,
+          "content": {"multipart/form-data": {"schema": {
+            "type": "object", "required": ["file"],
+            "properties": {
+              "file": {"type": "string", "format": "binary", "description": "mp3, wav, m4a, ogg, mp4, aac, flac, webm; до 200 МБ"},
+              "employee_id": {"type": "string"},
+              "employee_name": {"type": "string"},
+              "phone_from": {"type": "string"},
+              "phone_to": {"type": "string"},
+              "direction": {"type": "string", "enum": ["inbound", "outbound"]}
+            }
+          }}}
+        },
+        "responses": {
+          "200": {"description": "Файл принят, звонок поставлен в обработку"},
+          "400": {"description": "Не аудиофайл или пустой файл"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "413": {"description": "Файл больше 200 МБ"}
+        }
+      }
+    },
+    "/calls": {
+      "get": {
+        "tags": ["Calls"], "summary": "Список звонков с фильтрами",
+        "parameters": [
+          {"name": "status", "in": "query", "schema": {"$ref": "#/components/schemas/Status"}},
+          {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["mango", "manual"]}},
+          {"name": "employee_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "date_from", "in": "query", "description": "ISO 8601, например 2024-01-01", "schema": {"type": "string"}},
+          {"name": "date_to", "in": "query", "description": "ISO 8601; дата без времени включает весь день", "schema": {"type": "string"}},
+          {"name": "q", "in": "query", "description": "Поиск по транскрипции, резюме, сотруднику, телефону", "schema": {"type": "string"}},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {
+          "200": {"description": "{total, limit, offset, calls[]}"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "422": {"description": "Неверный параметр"}
+        }
+      }
+    },
+    "/calls/{call_id}": {
+      "get": {
+        "tags": ["Calls"], "summary": "Полная информация о звонке",
+        "parameters": [{"$ref": "#/components/parameters/CallId"}],
+        "responses": {"200": {"description": "Все поля звонка"}, "403": {"$ref": "#/components/responses/Forbidden"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/calls/{call_id}/status": {
+      "get": {
+        "tags": ["Calls"], "summary": "Статус обработки (лёгкий запрос для опроса)",
+        "parameters": [{"$ref": "#/components/parameters/CallId"}],
+        "responses": {"200": {"description": "Статус и временные метки"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/calls/{call_id}/audio": {
+      "get": {
+        "tags": ["Calls"], "summary": "Аудиозапись (поддерживает Range)",
+        "parameters": [
+          {"$ref": "#/components/parameters/CallId"},
+          {"name": "api_key", "in": "query", "description": "Ключ для <audio src> и ссылок на скачивание", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "Файл целиком"},
+          "206": {"description": "Часть файла по заголовку Range"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "416": {"description": "Диапазон за пределами файла"}
+        }
+      }
+    },
+    "/calls/{call_id}/transcript": {
+      "get": {
+        "tags": ["Calls"], "summary": "Транскрипция",
+        "parameters": [{"$ref": "#/components/parameters/CallId"}],
+        "responses": {"200": {"description": "Текст и сегменты с таймстампами"}, "404": {"description": "Звонок не найден или транскрипция ещё не готова"}}
+      }
+    },
+    "/calls/{call_id}/analysis": {
+      "get": {
+        "tags": ["Calls"], "summary": "Результаты AI-анализа",
+        "parameters": [{"$ref": "#/components/parameters/CallId"}],
+        "responses": {"200": {"description": "Резюме, тональность, оценка, итог"}, "404": {"description": "Звонок не найден или анализ ещё не готов"}}
+      }
+    },
+    "/admin/stats": {
+      "get": {
+        "tags": ["Admin"], "summary": "Статистика для дашборда",
+        "responses": {"200": {"description": "Счётчики звонков, ошибок, хранилища"}, "403": {"$ref": "#/components/responses/Forbidden"}}
+      }
+    },
+    "/admin/logs": {
+      "get": {
+        "tags": ["Admin"], "summary": "Журнал операций и ошибок",
+        "parameters": [
+          {"name": "level", "in": "query", "schema": {"type": "string", "enum": ["info", "warning", "error"]}},
+          {"name": "stage", "in": "query", "schema": {"type": "string"}},
+          {"name": "call_id", "in": "query", "schema": {"type": "string"}},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {"200": {"description": "{total, limit, offset, logs[]}"}, "403": {"$ref": "#/components/responses/Forbidden"}}
+      }
+    }
+  }
+}
