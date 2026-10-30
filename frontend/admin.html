@@ -2795,6 +2795,13 @@ async function submitImport() {
   const label = document.getElementById('importProgressText');
   progressWrap.style.display = 'block';
 
+  if (!getApiKey()) {
+    showToast('Введите API-ключ в шапке страницы и нажмите «Применить»', 'error');
+    btn.disabled = false;
+    progressWrap.style.display = 'none';
+    return;
+  }
+
   const fd = new FormData();
   fd.append('file', _importFile);
   fd.append('employee_name', document.getElementById('importEmployeeName').value.trim());
@@ -2816,10 +2823,17 @@ async function submitImport() {
         }
       };
       xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
-        else reject(new Error(`${xhr.status}: ${xhr.responseText}`));
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText));
+          return;
+        }
+        let detail = xhr.responseText;
+        try { detail = JSON.parse(xhr.responseText).detail || detail; } catch (_) { /* не JSON (например, страница nginx) */ }
+        if (xhr.status === 403) detail = 'неверный API-ключ — проверьте поле в шапке страницы';
+        if (xhr.status === 413) detail = 'файл слишком большой (максимум 200 МБ)';
+        reject(new Error(`${xhr.status}: ${detail}`));
       };
-      xhr.onerror = () => reject(new Error('Сетевая ошибка'));
+      xhr.onerror = () => reject(new Error('сервер недоступен — проверьте, что система запущена'));
       xhr.send(fd);
     });
 
@@ -2833,6 +2847,11 @@ async function submitImport() {
       if (newCallId) startPollCallStatus(newCallId);
     }, 800);
   } catch (e) {
+    // Ошибки браузера (TypeError и т.п.) приходят с невнятным текстом — показываем и тип
+    if (!(e instanceof Error) || e.name !== 'Error') {
+      console.error('Импорт звонка:', e);
+      e = new Error(`${e.name || 'Ошибка'}: ${e.message} (подробности в консоли браузера)`);
+    }
     label.textContent = 'Ошибка: ' + e.message;
     label.style.color = 'var(--accent-red)';
     btn.disabled = false;
