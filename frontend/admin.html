@@ -1894,6 +1894,13 @@
 // API-ключ вводится в поле в шапке (api-key.js)
 async function apiFetch(url) {
   const res = await fetch(url, { headers: { 'X-API-Key': getApiKey() } });
+  if (res.status === 403) {
+    // Без ключа таблица просто пустая — это сбивает с толку, поэтому говорим прямо
+    document.querySelector('.api-key-box')?.classList.add('missing');
+    throw new Error(getApiKey()
+      ? 'неверный API-ключ. Введите правильный ключ в поле вверху страницы и нажмите «Применить»'
+      : 'не введён API-ключ. Введите его в поле вверху страницы и нажмите «Применить»');
+  }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -1930,6 +1937,8 @@ async function loadData() {
     showToast('Данные загружены', 'success');
   } catch (e) {
     showToast('Ошибка загрузки: ' + e.message, 'error');
+    const footer = document.getElementById('tableFooterInfo');
+    if (footer) footer.textContent = 'Звонки не загружены: ' + e.message;
   }
 }
 
